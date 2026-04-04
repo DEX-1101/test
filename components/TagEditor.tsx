@@ -188,6 +188,16 @@ export const TagEditor: React.FC = () => {
   const [inpaintCursorPos, setInpaintCursorPos] = useState({ x: -1000, y: -1000 });
   const [isHoveringCanvas, setIsHoveringCanvas] = useState(false);
 
+  const [inpaintState, setInpaintState] = useState<{
+    history: string[];
+    index: number;
+  }>({
+    history: [],
+    index: 0
+  });
+
+  const isProcessing = wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle';
+
   // Save settings to localStorage
   useEffect(() => {
     localStorage.setItem('wd_modelId', selectedModelId);
@@ -511,6 +521,9 @@ export const TagEditor: React.FC = () => {
         canvas.width = img.width;
         canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
+        // Initialize history with the original image
+        const dataUrl = canvas.toDataURL('image/png');
+        setInpaintState({ history: [dataUrl], index: 0 });
       };
       img.src = previewUrl;
     }
@@ -547,12 +560,53 @@ export const TagEditor: React.FC = () => {
     draw(e);
   };
 
+  const saveInpaintState = () => {
+    if (!inpaintCanvasRef.current) return;
+    const dataUrl = inpaintCanvasRef.current.toDataURL('image/png');
+    setInpaintState(prev => {
+      const newHistory = prev.history.slice(0, prev.index + 1);
+      newHistory.push(dataUrl);
+      return { history: newHistory, index: newHistory.length - 1 };
+    });
+  };
+
   const stopDrawing = () => {
     if (isDrawing) {
       setIsDrawing(false);
       if (inpaintCtxRef.current) {
         inpaintCtxRef.current.beginPath();
       }
+      saveInpaintState();
+    }
+  };
+
+  const handleUndoInpaint = () => {
+    if (inpaintState.index > 0) {
+      const newIndex = inpaintState.index - 1;
+      setInpaintState(prev => ({ ...prev, index: newIndex }));
+      const img = new Image();
+      img.onload = () => {
+        if (inpaintCtxRef.current && inpaintCanvasRef.current) {
+          inpaintCtxRef.current.clearRect(0, 0, inpaintCanvasRef.current.width, inpaintCanvasRef.current.height);
+          inpaintCtxRef.current.drawImage(img, 0, 0);
+        }
+      };
+      img.src = inpaintState.history[newIndex];
+    }
+  };
+
+  const handleRedoInpaint = () => {
+    if (inpaintState.index < inpaintState.history.length - 1) {
+      const newIndex = inpaintState.index + 1;
+      setInpaintState(prev => ({ ...prev, index: newIndex }));
+      const img = new Image();
+      img.onload = () => {
+        if (inpaintCtxRef.current && inpaintCanvasRef.current) {
+          inpaintCtxRef.current.clearRect(0, 0, inpaintCanvasRef.current.width, inpaintCanvasRef.current.height);
+          inpaintCtxRef.current.drawImage(img, 0, 0);
+        }
+      };
+      img.src = inpaintState.history[newIndex];
     }
   };
 
@@ -978,7 +1032,8 @@ export const TagEditor: React.FC = () => {
         <div className="p-4 border-b border-white/5 flex flex-col gap-2">
           <button 
             onClick={handleOpenFolder}
-            className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border border-white/10"
+            disabled={isProcessing}
+            className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border border-white/10 disabled:opacity-50"
           >
             <FolderOpen size={16} />
             Open Folder
@@ -990,6 +1045,7 @@ export const TagEditor: React.FC = () => {
               <div 
                 key={file.name}
                 onClick={() => {
+                  if (isProcessing) return;
                   setSelectedIndex(idx);
                   setTagState({
                     current: file.tags,
@@ -1092,40 +1148,38 @@ export const TagEditor: React.FC = () => {
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] flex flex-col items-center justify-end z-50 pointer-events-none">
               
               {/* Global Floating Progress Bar */}
-              {(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') && (
-                <div className="w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 mb-4 pointer-events-auto animate-in slide-in-from-bottom-4 fade-in duration-300">
-                  <div className="flex justify-between text-sm text-white font-medium mb-2">
-                    <span>
-                      {wdStatus !== 'idle' ? wdProgressText : 
-                       batchStatus !== 'idle' ? 'Processing batch...' : 
-                       zipProgressText}
-                    </span>
-                    <span>
-                      {wdStatus !== 'idle' ? wdProgress : 
-                       batchStatus !== 'idle' ? batchProgress : 
-                       zipProgress}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-300 ease-out ${
-                        wdStatus !== 'idle' ? 'bg-purple-500' : 
-                        batchStatus !== 'idle' ? 'bg-blue-500' : 
-                        'bg-orange-500'
-                      }`}
-                      style={{ width: `${
-                        wdStatus !== 'idle' ? wdProgress : 
-                        batchStatus !== 'idle' ? batchProgress : 
-                        zipProgress
-                      }%` }}
-                    />
-                  </div>
+              <div className={`absolute bottom-full mb-4 w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 pointer-events-auto transition-all duration-300 ease-in-out ${(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+                <div className="flex justify-between text-sm text-white font-medium mb-2">
+                  <span>
+                    {wdStatus !== 'idle' ? wdProgressText : 
+                     batchStatus !== 'idle' ? 'Processing batch...' : 
+                     zipProgressText}
+                  </span>
+                  <span>
+                    {wdStatus !== 'idle' ? wdProgress : 
+                     batchStatus !== 'idle' ? batchProgress : 
+                     zipProgress}%
+                  </span>
                 </div>
-              )}
+                <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-300 ease-out ${
+                      wdStatus !== 'idle' ? 'bg-purple-500' : 
+                      batchStatus !== 'idle' ? 'bg-blue-500' : 
+                      'bg-orange-500'
+                    }`}
+                    style={{ width: `${
+                      wdStatus !== 'idle' ? wdProgress : 
+                      batchStatus !== 'idle' ? batchProgress : 
+                      zipProgress
+                    }%` }}
+                  />
+                </div>
+              </div>
 
               <div className="relative w-full flex justify-center">
                 {/* Floating Tag Editor Overlay (Centered Landscape) */}
-                <div className={`w-full max-h-[85vh] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 scale-95 absolute bottom-0 pointer-events-none' : 'opacity-100 scale-100 relative pointer-events-auto'}`}>
+                <div className={`w-full max-h-[85vh] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 translate-y-8 absolute bottom-0 pointer-events-none' : 'opacity-100 translate-y-0 relative pointer-events-auto'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -1170,7 +1224,8 @@ export const TagEditor: React.FC = () => {
 
                     <button 
                       onClick={() => setIsAutoTagModalOpen(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      disabled={isProcessing}
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white disabled:opacity-50"
                       title="Auto-tag & Batch Process"
                     >
                       <Wand2 size={16}/> Auto Tag
@@ -1178,7 +1233,8 @@ export const TagEditor: React.FC = () => {
 
                     <button 
                       onClick={() => setIsZipModalOpen(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      disabled={isProcessing}
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white disabled:opacity-50"
                       title="Export to ZIP / Hugging Face"
                     >
                       <Archive size={16}/> ZIP
@@ -1186,7 +1242,8 @@ export const TagEditor: React.FC = () => {
 
                     <button 
                       onClick={() => setIsInpaintOpen(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      disabled={isProcessing}
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white disabled:opacity-50"
                       title="Inpaint / Draw"
                     >
                       <Paintbrush size={16}/> Inpaint
@@ -1194,7 +1251,8 @@ export const TagEditor: React.FC = () => {
 
                     <button 
                       onClick={() => setIsCropping(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      disabled={isProcessing}
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white disabled:opacity-50"
                     >
                       <CropIcon size={16}/> Crop
                     </button>
@@ -1208,12 +1266,13 @@ export const TagEditor: React.FC = () => {
                         value={newTag}
                         onChange={(e) => setNewTag(e.target.value)}
                         onKeyDown={handleAddTag}
+                        disabled={isProcessing}
                         placeholder="Add tags (comma separated)..."
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-4 pr-10 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-4 pr-10 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all disabled:opacity-50"
                       />
                       <button
                         onClick={commitNewTag}
-                        disabled={!newTag.trim()}
+                        disabled={!newTag.trim() || isProcessing}
                         className="absolute right-2 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-zinc-400"
                         title="Add Tag"
                       >
@@ -1222,7 +1281,7 @@ export const TagEditor: React.FC = () => {
                     </div>
                     <button 
                       onClick={handleSave}
-                      disabled={saveStatus === 'saving'}
+                      disabled={saveStatus === 'saving' || isProcessing}
                       className="shrink-0 px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
                     >
                       {saveStatus === 'saving' ? (
@@ -1239,7 +1298,7 @@ export const TagEditor: React.FC = () => {
             </div>
 
             {/* Floating Crop Controls */}
-            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 translate-y-0 relative pointer-events-auto' : 'opacity-0 translate-y-8 absolute bottom-0 pointer-events-none'}`}>
               <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10 mr-2">
                 <button 
                   onClick={handleUndoCrop} 
@@ -1269,7 +1328,7 @@ export const TagEditor: React.FC = () => {
               </button>
               <button 
                 onClick={handleSave}
-                disabled={saveStatus === 'saving' || !crop || crop.width === 0}
+                disabled={saveStatus === 'saving' || !crop || crop.width === 0 || isProcessing}
                 className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
               >
                 {saveStatus === 'saving' ? (
@@ -1282,10 +1341,11 @@ export const TagEditor: React.FC = () => {
             </div>
 
             {/* Floating Auto Tag & Batch Processing Overlay */}
-            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 translate-y-0 relative pointer-events-auto' : 'opacity-0 translate-y-8 absolute bottom-0 pointer-events-none'}`}>
         <button 
-          onClick={() => setIsAutoTagModalOpen(false)}
-          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
+          onClick={() => !isProcessing && setIsAutoTagModalOpen(false)}
+          disabled={isProcessing}
+          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10 disabled:opacity-50"
         >
           <X size={18} />
         </button>
@@ -1351,7 +1411,7 @@ export const TagEditor: React.FC = () => {
 
             <button 
               onClick={handleWdProcess}
-              disabled={wdStatus !== 'idle' || batchStatus !== 'idle'}
+              disabled={isProcessing}
               className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
             >
               {wdStatus === 'loading' || wdStatus === 'processing' ? (
@@ -1428,7 +1488,7 @@ export const TagEditor: React.FC = () => {
 
             <button 
               onClick={handleBatchProcess}
-              disabled={batchStatus !== 'idle' || wdStatus !== 'idle'}
+              disabled={isProcessing || (!batchActivationTags && !batchEmphasizeTags && !batchRemoveTags && !batchRename)}
               className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
             >
               {batchStatus === 'processing' ? (
@@ -1442,29 +1502,14 @@ export const TagEditor: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* Shared Progress Bar Area */}
-        {(wdStatus !== 'idle' || batchStatus !== 'idle') && (
-          <div className="px-5 pb-4 bg-black/20 pt-3 border-t border-white/10">
-            <div className="flex justify-between text-xs text-zinc-400 font-medium mb-1.5">
-              <span>{wdStatus !== 'idle' ? wdProgressText : 'Processing batch...'}</span>
-              <span>{wdStatus !== 'idle' ? wdProgress : batchProgress}%</span>
-            </div>
-            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-300 ease-out ${wdStatus !== 'idle' ? 'bg-purple-500' : 'bg-blue-500'}`}
-                style={{ width: `${wdStatus !== 'idle' ? wdProgress : batchProgress}%` }}
-              />
-            </div>
-          </div>
-        )}
       </div>
 
             {/* Floating ZIP Overlay */}
-            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 translate-y-0 relative pointer-events-auto' : 'opacity-0 translate-y-8 absolute bottom-0 pointer-events-none'}`}>
         <button 
-          onClick={() => setIsZipModalOpen(false)}
-          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
+          onClick={() => !isProcessing && setIsZipModalOpen(false)}
+          disabled={isProcessing}
+          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10 disabled:opacity-50"
         >
           <X size={18} />
         </button>
@@ -1516,7 +1561,7 @@ export const TagEditor: React.FC = () => {
 
             <button 
               onClick={() => handleCreateZip('download')}
-              disabled={zipStatus !== 'idle'}
+              disabled={isProcessing}
               className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
             >
               {zipStatus === 'zipping' ? (
@@ -1561,7 +1606,7 @@ export const TagEditor: React.FC = () => {
 
             <button 
               onClick={() => handleCreateZip('upload')}
-              disabled={zipStatus !== 'idle' || !hfToken || !hfRepo}
+              disabled={isProcessing || !hfToken || !hfRepo}
               className="w-full py-2.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
             >
               {zipStatus === 'uploading' || zipStatus === 'zipping' ? (
@@ -1578,7 +1623,25 @@ export const TagEditor: React.FC = () => {
       </div>
 
             {/* Floating Inpaint Controls */}
-            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 translate-y-0 relative pointer-events-auto' : 'opacity-0 translate-y-8 absolute bottom-0 pointer-events-none'}`}>
+        <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10 mr-2">
+          <button 
+            onClick={handleUndoInpaint} 
+            disabled={inpaintState.index <= 0} 
+            className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
+            title="Undo Inpaint"
+          >
+            <Undo2 size={16}/>
+          </button>
+          <button 
+            onClick={handleRedoInpaint} 
+            disabled={inpaintState.index >= inpaintState.history.length - 1} 
+            className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
+            title="Redo Inpaint"
+          >
+            <Redo2 size={16}/>
+          </button>
+        </div>
         <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10">
           <button 
             onClick={() => setInpaintMode('draw')}
@@ -1621,7 +1684,8 @@ export const TagEditor: React.FC = () => {
         </button>
         <button 
           onClick={handleApplyInpaint}
-          className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors"
+          disabled={isProcessing}
+          className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors disabled:opacity-50"
         >
           <Save size={16} /> Apply
         </button>
