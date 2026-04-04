@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2 } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -18,6 +18,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import ReactCrop, { type Crop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -125,6 +127,9 @@ export const TagEditor: React.FC = () => {
   const [newTag, setNewTag] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [crop, setCrop] = useState<Crop>();
+  const [isCropping, setIsCropping] = useState(false);
+  const previewImgRef = useRef<HTMLImageElement>(null);
   const urlCache = useRef<Map<string, string>>(new Map());
 
   const updateTags = (updater: string[] | ((prev: string[]) => string[])) => {
@@ -293,6 +298,35 @@ export const TagEditor: React.FC = () => {
     }
   };
 
+  const getCroppedImg = async (image: HTMLImageElement, crop: Crop): Promise<Blob | null> => {
+    const canvas = document.createElement('canvas');
+    const scaleX = image.naturalWidth / image.width;
+    const scaleY = image.naturalHeight / image.height;
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) return null;
+
+    ctx.drawImage(
+      image,
+      crop.x * scaleX,
+      crop.y * scaleY,
+      crop.width * scaleX,
+      crop.height * scaleY,
+      0,
+      0,
+      crop.width,
+      crop.height
+    );
+
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => {
+        resolve(blob);
+      }, 'image/jpeg', 1);
+    });
+  };
+
   const handleSave = async () => {
     if (selectedIndex === -1 || !directoryHandle) return;
     setSaveStatus('saving');
@@ -309,6 +343,24 @@ export const TagEditor: React.FC = () => {
       const writable = await txtHandle.createWritable();
       await writable.write(activeTags.join(', '));
       await writable.close();
+
+      // Save Crop if exists
+      if (crop && crop.width > 0 && crop.height > 0 && previewImgRef.current) {
+        const croppedBlob = await getCroppedImg(previewImgRef.current, crop);
+        if (croppedBlob) {
+          // @ts-ignore
+          const writableImg = await currentFile.imageHandle.createWritable();
+          await writableImg.write(croppedBlob);
+          await writableImg.close();
+          
+          // Update preview URL to reflect new crop
+          const newObjectUrl = URL.createObjectURL(croppedBlob);
+          urlCache.current.set(currentFile.name, newObjectUrl);
+          setPreviewUrl(newObjectUrl);
+          setCrop(undefined); // reset crop
+          setIsCropping(false);
+        }
+      }
 
       // Update state to reflect that it now has a text handle and updated tags
       setFiles(prev => {
@@ -408,56 +460,45 @@ export const TagEditor: React.FC = () => {
       </div>
 
       {/* Main Content - Fullscreen Image & Overlay */}
-      <div className="flex-1 relative overflow-hidden bg-black/90">
+      <div className="flex-1 relative overflow-hidden bg-black/90 flex items-center justify-center">
         {selectedIndex !== -1 ? (
           <>
             {/* Fullscreen Zoomable/Pannable Image */}
-            <TransformWrapper centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
-              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
-                <img 
-                  src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
-                  alt={files[selectedIndex].name}
-                  className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
-                />
+            <TransformWrapper disabled={isCropping} centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
+              <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {isCropping ? (
+                  <ReactCrop crop={crop} onChange={c => setCrop(c)} className="max-w-full max-h-full flex items-center justify-center">
+                    <img 
+                      ref={previewImgRef}
+                      src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+                      alt={files[selectedIndex].name}
+                      className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
+                    />
+                  </ReactCrop>
+                ) : (
+                  <img 
+                    ref={previewImgRef}
+                    src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+                    alt={files[selectedIndex].name}
+                    className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
+                  />
+                )}
               </TransformComponent>
             </TransformWrapper>
 
-            {/* Floating Tag Editor Overlay */}
-            <div className="absolute bottom-6 right-6 w-[380px] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl z-50 overflow-hidden">
-               {/* Header with Undo/Redo */}
-               <div className="flex items-center justify-between p-3 border-b border-white/10 bg-white/5">
-                 <div className="flex gap-1">
-                   <button 
-                     onClick={handleUndo} 
-                     disabled={tagState.index <= 0} 
-                     className="p-1.5 text-white disabled:opacity-30 hover:bg-white/10 rounded-lg transition-colors" 
-                     title="Undo (Ctrl+Z)"
-                   >
-                     <Undo2 size={16}/>
-                   </button>
-                   <button 
-                     onClick={handleRedo} 
-                     disabled={tagState.index >= tagState.history.length - 1} 
-                     className="p-1.5 text-white disabled:opacity-30 hover:bg-white/10 rounded-lg transition-colors" 
-                     title="Redo (Ctrl+Shift+Z)"
-                   >
-                     <Redo2 size={16}/>
-                   </button>
-                 </div>
-                 <span className="text-xs text-white/50 truncate max-w-[200px]">{files[selectedIndex].name}</span>
-                 <span className="bg-white/10 text-[10px] px-2 py-0.5 rounded-full text-zinc-300">{activeTags.length} tags</span>
-               </div>
-
-               {/* Tags Area */}
-               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar flex flex-col">
+            {/* Floating Tag Editor Overlay (Centered Landscape) */}
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[700px] max-h-[85%] flex flex-col bg-black/50 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+               
+               {/* Tags Area (Landscape) */}
+               <div className="p-5 min-h-[100px] max-h-[200px] overflow-y-auto custom-scrollbar">
                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                    <SortableContext items={activeTags} strategy={rectSortingStrategy}>
-                     <div className="flex flex-wrap gap-2 content-start">
+                     <div className="flex flex-wrap justify-center gap-2 content-start">
                        {activeTags.map((tag) => (
                          <SortableTag key={tag} tag={tag} onRemove={handleRemoveTag} />
                        ))}
                        {activeTags.length === 0 && (
-                         <div className="w-full text-center text-zinc-500 text-sm italic p-4 bg-white/5 rounded-xl border border-white/5">
+                         <div className="w-full text-center text-zinc-400 text-sm italic p-2">
                            No tags yet. Type below to add!
                          </div>
                        )}
@@ -466,28 +507,59 @@ export const TagEditor: React.FC = () => {
                  </DndContext>
                </div>
 
-               {/* Input & Save Area */}
-               <div className="p-3 bg-black/40 border-t border-white/10 flex items-center gap-2">
+               {/* Vertical Buttons Between Tags and Input */}
+               <div className="flex flex-col items-center gap-2 py-4 bg-white/5 border-y border-white/10">
+                  <button 
+                    onClick={handleUndo} 
+                    disabled={tagState.index <= 0} 
+                    className="w-48 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-30 transition-colors"
+                  >
+                    <Undo2 size={16}/> Undo
+                  </button>
+                  <button 
+                    onClick={handleRedo} 
+                    disabled={tagState.index >= tagState.history.length - 1} 
+                    className="w-48 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-30 transition-colors"
+                  >
+                    <Redo2 size={16}/> Redo
+                  </button>
+                  <button 
+                    onClick={() => setIsCropping(!isCropping)} 
+                    className={`w-48 py-2 rounded-full text-sm font-medium flex items-center justify-center gap-2 transition-colors ${isCropping ? 'bg-blue-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}
+                  >
+                    <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Draw Crop Area'}
+                  </button>
+                  <button 
+                    onClick={handleSave}
+                    disabled={saveStatus === 'saving'}
+                    className="w-48 py-2 rounded-full bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                  >
+                    {saveStatus === 'saving' ? (
+                      <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                    ) : saveStatus === 'saved' ? (
+                      <Save size={16} />
+                    ) : (
+                      <Save size={16} />
+                    )}
+                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
+                  </button>
+               </div>
+
+               {/* Input Area */}
+               <div className="p-4 bg-black/40">
                  <input 
                    type="text"
                    value={newTag}
                    onChange={(e) => setNewTag(e.target.value)}
                    onKeyDown={handleAddTag}
-                   placeholder="Add tags..."
-                   className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                   placeholder="Add tags (comma separated) and press Enter..."
+                   className="w-full bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm text-center text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
                  />
-                 <button 
-                   onClick={handleSave}
-                   disabled={saveStatus === 'saving'}
-                   className={`shrink-0 flex items-center justify-center px-5 py-2.5 rounded-full font-bold text-sm transition-all shadow-lg ${saveStatus === 'saved' ? 'bg-green-500 text-white' : 'bg-white text-black hover:bg-zinc-200 hover:scale-105 active:scale-95'} disabled:opacity-50 disabled:hover:scale-100`}
-                 >
-                   {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
-                 </button>
                </div>
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-zinc-500 gap-4">
+          <div className="flex flex-col items-center justify-center text-zinc-500 gap-4">
             <ImageIcon size={64} strokeWidth={1} className="opacity-50" />
             <p>Select an image from the sidebar</p>
           </div>
