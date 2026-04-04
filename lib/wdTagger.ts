@@ -3,10 +3,32 @@ import * as ort from 'onnxruntime-web';
 // Set WASM paths to CDN to avoid Vite bundling issues
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/";
 
-const MODEL_URL = "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx";
-const TAGS_URL = "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/raw/main/selected_tags.csv";
 const DB_NAME = "WDTaggerCache";
 const STORE_NAME = "models";
+
+export const MODELS = {
+  'eva02-v3': {
+    name: 'EVA02 Large v3',
+    url: 'https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx',
+    tagsUrl: 'https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/raw/main/selected_tags.csv',
+    size: '1.2GB',
+    sizeBytes: 1260435999
+  },
+  'vit-v3': {
+    name: 'ViT Large v3',
+    url: 'https://huggingface.co/SmilingWolf/wd-vit-large-tagger-v3/resolve/main/model.onnx',
+    tagsUrl: 'https://huggingface.co/SmilingWolf/wd-vit-large-tagger-v3/raw/main/selected_tags.csv',
+    size: '1.2GB',
+    sizeBytes: 1260000000
+  },
+  'swinv2-v2': {
+    name: 'SwinV2 v2',
+    url: 'https://huggingface.co/SmilingWolf/wd-v1-4-swinv2-tagger-v2/resolve/main/model.onnx',
+    tagsUrl: 'https://huggingface.co/SmilingWolf/wd-v1-4-swinv2-tagger-v2/raw/main/selected_tags.csv',
+    size: '1.1GB',
+    sizeBytes: 1100000000
+  }
+};
 
 export interface TagInfo {
   name: string;
@@ -27,13 +49,13 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-async function getModelFromDB(): Promise<ArrayBuffer | null> {
+async function getModelFromDB(modelId: string): Promise<ArrayBuffer | null> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
-      const request = store.get('model.onnx');
+      const request = store.get(`model_${modelId}.onnx`);
       request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
     });
@@ -43,13 +65,13 @@ async function getModelFromDB(): Promise<ArrayBuffer | null> {
   }
 }
 
-async function saveModelToDB(buffer: ArrayBuffer): Promise<void> {
+async function saveModelToDB(modelId: string, buffer: ArrayBuffer): Promise<void> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const request = store.put(buffer, 'model.onnx');
+      const request = store.put(buffer, `model_${modelId}.onnx`);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -58,13 +80,13 @@ async function saveModelToDB(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
-export async function deleteModelFromDB(): Promise<void> {
+export async function deleteModelFromDB(modelId: string): Promise<void> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const request = store.delete('model.onnx');
+      const request = store.delete(`model_${modelId}.onnx`);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -73,44 +95,47 @@ export async function deleteModelFromDB(): Promise<void> {
   }
 }
 
-export async function checkModelExists(): Promise<boolean> {
-  const model = await getModelFromDB();
+export async function checkModelExists(modelId: string): Promise<boolean> {
+  const model = await getModelFromDB(modelId);
   return model !== null;
 }
 
 export class WDTagger {
   private session: ort.InferenceSession | null = null;
   private tags: TagInfo[] = [];
+  private currentModelId: string | null = null;
 
-  async init(onProgress?: (progress: number, status: string) => void) {
-    if (this.session) return;
+  async init(modelId: string, onProgress?: (progress: number, status: string) => void) {
+    if (this.session && this.currentModelId === modelId) return;
+
+    const modelInfo = MODELS[modelId as keyof typeof MODELS];
+    if (!modelInfo) throw new Error("Invalid model ID");
 
     if (onProgress) onProgress(0, 'Loading tags...');
-    if (this.tags.length === 0) {
-      const response = await fetch(TAGS_URL);
-      const text = await response.text();
-      const lines = text.trim().split('\n');
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(',');
-        if (parts.length >= 3) {
-          this.tags.push({
-            name: parts[1],
-            category: parseInt(parts[2], 10)
-          });
-        }
+    this.tags = [];
+    const response = await fetch(modelInfo.tagsUrl);
+    const text = await response.text();
+    const lines = text.trim().split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split(',');
+      if (parts.length >= 3) {
+        this.tags.push({
+          name: parts[1],
+          category: parseInt(parts[2], 10)
+        });
       }
     }
 
     if (onProgress) onProgress(0, 'Checking cache...');
-    let modelBuffer = await getModelFromDB();
+    let modelBuffer = await getModelFromDB(modelId);
     
     if (!modelBuffer) {
-      if (onProgress) onProgress(0, 'Downloading model (1.2GB)...');
-      const response = await fetch(MODEL_URL);
+      if (onProgress) onProgress(0, `Downloading model (${modelInfo.size})...`);
+      const response = await fetch(modelInfo.url);
       if (!response.ok) throw new Error(`Failed to fetch model: ${response.statusText}`);
       
       const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 1260435999; // Fallback to known size
+      const total = contentLength ? parseInt(contentLength, 10) : modelInfo.sizeBytes;
       let loaded = 0;
       
       const reader = response.body?.getReader();
@@ -139,16 +164,25 @@ export class WDTagger {
       modelBuffer = buffer.buffer;
       
       if (onProgress) onProgress(100, 'Saving to cache...');
-      await saveModelToDB(modelBuffer);
+      await saveModelToDB(modelId, modelBuffer);
     } else {
       if (onProgress) onProgress(100, 'Model loaded from cache.');
     }
 
-    if (onProgress) onProgress(100, 'Initializing ONNX session...');
-    this.session = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['wasm']
-    });
+    if (onProgress) onProgress(100, 'Initializing ONNX session (WebGL/WASM)...');
     
+    try {
+      this.session = await ort.InferenceSession.create(modelBuffer, {
+        executionProviders: ['webgl', 'wasm']
+      });
+    } catch (e) {
+      console.warn("WebGL failed, falling back to WASM", e);
+      this.session = await ort.InferenceSession.create(modelBuffer, {
+        executionProviders: ['wasm']
+      });
+    }
+    
+    this.currentModelId = modelId;
     if (onProgress) onProgress(100, 'Ready');
   }
 
