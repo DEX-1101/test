@@ -966,27 +966,17 @@ export const TagEditor: React.FC = () => {
       </div>
 
       {/* Floating Auto Tag & Batch Processing Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
-        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Wand2 size={18} className="text-purple-400" />
-            Auto Tag & Batch Process
-          </h2>
-          <button 
-            onClick={() => setIsAutoTagModalOpen(false)}
-            className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+        <button 
+          onClick={() => setIsAutoTagModalOpen(false)}
+          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
+        >
+          <X size={18} />
+        </button>
         
-        <div className="p-5 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1">
+        <div className="p-6 pt-8 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1 relative">
           {/* Left Column: Tag Generation */}
           <div className="flex flex-col gap-4">
-            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
-              <Wand2 size={16} className="text-zinc-400" /> 1. Generate Tags
-            </h3>
-            
             <div className="space-y-1.5">
               <div className="flex justify-between items-center">
                 <label className="text-sm text-zinc-300">Model</label>
@@ -1061,10 +1051,6 @@ export const TagEditor: React.FC = () => {
 
           {/* Right Column: Batch Processing */}
           <div className="flex flex-col gap-4">
-            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
-              <Settings size={16} className="text-zinc-400" /> 2. Batch Process
-            </h3>
-
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
               <input 
@@ -1115,7 +1101,7 @@ export const TagEditor: React.FC = () => {
               ) : (
                 <Settings size={16} />
               )}
-              {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Process Batch'}
+              {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Process Tag'}
             </button>
           </div>
         </div>
