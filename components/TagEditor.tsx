@@ -26,16 +26,24 @@ interface FileEntry {
   tags: string[];
 }
 
-const Thumbnail = ({ imageHandle, name }: { imageHandle: FileSystemFileHandle, name: string }) => {
-  const [url, setUrl] = useState<string>('');
+const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFileHandle, name: string, urlCache: React.MutableRefObject<Map<string, string>> }) => {
+  const [url, setUrl] = useState<string>(urlCache.current.get(name) || '');
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
+    if (url) return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !url) {
-        imageHandle.getFile().then(file => {
-          setUrl(URL.createObjectURL(file));
-        });
+      if (entries[0].isIntersecting) {
+        const cached = urlCache.current.get(name);
+        if (cached) {
+          setUrl(cached);
+        } else {
+          imageHandle.getFile().then(file => {
+            const newUrl = URL.createObjectURL(file);
+            urlCache.current.set(name, newUrl);
+            setUrl(newUrl);
+          });
+        }
         observer.disconnect();
       }
     }, { rootMargin: '200px' });
@@ -47,13 +55,7 @@ const Thumbnail = ({ imageHandle, name }: { imageHandle: FileSystemFileHandle, n
     return () => {
       observer.disconnect();
     };
-  }, [imageHandle, url]);
-
-  useEffect(() => {
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [url]);
+  }, [imageHandle, name, url, urlCache]);
 
   return (
     <img 
@@ -111,22 +113,58 @@ export const TagEditor: React.FC = () => {
   const [newTag, setNewTag] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const urlCache = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    return () => {
+      urlCache.current.forEach(url => URL.revokeObjectURL(url));
+      urlCache.current.clear();
+    };
+  }, []);
 
   const currentImageHandle = files[selectedIndex]?.imageHandle;
   useEffect(() => {
     if (currentImageHandle) {
-      let objectUrl = '';
-      currentImageHandle.getFile().then(file => {
-        objectUrl = URL.createObjectURL(file);
-        setPreviewUrl(objectUrl);
-      });
-      return () => {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-      };
+      const name = currentImageHandle.name;
+      const cached = urlCache.current.get(name);
+      if (cached) {
+        setPreviewUrl(cached);
+      } else {
+        currentImageHandle.getFile().then(file => {
+          const objectUrl = URL.createObjectURL(file);
+          urlCache.current.set(name, objectUrl);
+          if (files[selectedIndex]?.name === name) {
+            setPreviewUrl(objectUrl);
+          }
+        });
+      }
     } else {
       setPreviewUrl('');
     }
-  }, [currentImageHandle]);
+  }, [currentImageHandle, selectedIndex, files]);
+
+  // Preload adjacent images for instant switching
+  useEffect(() => {
+    if (selectedIndex === -1) return;
+    
+    const preloadIndex = async (idx: number) => {
+      if (idx >= 0 && idx < files.length) {
+        const handle = files[idx].imageHandle;
+        const name = handle.name;
+        if (!urlCache.current.has(name)) {
+          try {
+            const file = await handle.getFile();
+            urlCache.current.set(name, URL.createObjectURL(file));
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
+    };
+
+    preloadIndex(selectedIndex + 1);
+    preloadIndex(selectedIndex - 1);
+  }, [selectedIndex, files]);
 
   const handleOpenFolder = async () => {
     try {
@@ -134,6 +172,11 @@ export const TagEditor: React.FC = () => {
       const dirHandle = await window.showDirectoryPicker({
         mode: 'readwrite'
       });
+      
+      // Clear cache when opening a new folder
+      urlCache.current.forEach(url => URL.revokeObjectURL(url));
+      urlCache.current.clear();
+      
       setDirectoryHandle(dirHandle);
       await loadFiles(dirHandle);
     } catch (err) {
@@ -276,7 +319,7 @@ export const TagEditor: React.FC = () => {
                 }}
                 className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
               >
-                <Thumbnail imageHandle={file.imageHandle} name={file.name} />
+                <Thumbnail imageHandle={file.imageHandle} name={file.name} urlCache={urlCache} />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
                   {file.tags.length}
                 </div>
