@@ -94,7 +94,7 @@ const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => 
       style={style}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-100 px-3 py-1.5 rounded-2xl text-sm font-medium group transition-colors hover:bg-blue-500/20 cursor-grab active:cursor-grabbing relative ${isDragging ? 'shadow-lg shadow-black/50 scale-105 z-50' : ''}`}
+      className={`flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-100 px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-blue-500/20 cursor-grab active:cursor-grabbing relative ${isDragging ? 'shadow-lg shadow-black/50 scale-105 z-50' : ''}`}
     >
       <span>{tag}</span>
       <button 
@@ -463,28 +463,30 @@ export const TagEditor: React.FC = () => {
       <div className="flex-1 relative overflow-hidden bg-black/90 flex items-center justify-center">
         {selectedIndex !== -1 ? (
           <>
-            {/* Fullscreen Zoomable/Pannable Image */}
-            <TransformWrapper disabled={isCropping} centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
-              <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {isCropping ? (
-                  <ReactCrop crop={crop} onChange={c => setCrop(c)} className="max-w-full max-h-full flex items-center justify-center">
-                    <img 
-                      ref={previewImgRef}
-                      src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
-                      alt={files[selectedIndex].name}
-                      className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
-                    />
-                  </ReactCrop>
-                ) : (
+            {/* Image Area */}
+            {isCropping ? (
+              <div className="w-full h-full flex items-center justify-center p-8">
+                <ReactCrop crop={crop} onChange={c => setCrop(c)}>
+                  <img 
+                    ref={previewImgRef}
+                    src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+                    alt={files[selectedIndex].name}
+                    className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
+                  />
+                </ReactCrop>
+              </div>
+            ) : (
+              <TransformWrapper centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
+                <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <img 
                     ref={previewImgRef}
                     src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
                     alt={files[selectedIndex].name}
                     className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
                   />
-                )}
-              </TransformComponent>
-            </TransformWrapper>
+                </TransformComponent>
+              </TransformWrapper>
+            )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden">
@@ -528,7 +530,10 @@ export const TagEditor: React.FC = () => {
                       <Redo2 size={18}/>
                     </button>
                     <button 
-                      onClick={() => setIsCropping(!isCropping)} 
+                      onClick={() => {
+                        setIsCropping(!isCropping);
+                        if (isCropping) setCrop(undefined);
+                      }} 
                       className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isCropping ? 'bg-blue-500 text-white' : 'bg-white/5 hover:bg-white/10 text-white'}`}
                     >
                       <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Crop'}
