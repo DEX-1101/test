@@ -269,7 +269,6 @@ export const TagEditor: React.FC = () => {
       setBatchStatus('done');
       setBatchProgress(100);
       setTimeout(() => {
-        setIsBatchModalOpen(false);
         setBatchStatus('idle');
         setBatchProgress(0);
       }, 1500);
@@ -536,7 +535,6 @@ export const TagEditor: React.FC = () => {
           });
 
           setCrop(undefined); // reset crop
-          setIsCropping(false);
         }
       }
 
@@ -843,10 +841,10 @@ export const TagEditor: React.FC = () => {
               <button 
                 onClick={handleSave}
                 disabled={saveStatus === 'saving' || !crop || crop.width === 0}
-                className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
               >
                 {saveStatus === 'saving' ? (
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
                 ) : (
                   <CropIcon size={16} />
                 )}
@@ -863,20 +861,7 @@ export const TagEditor: React.FC = () => {
       </div>
 
       {/* Floating Batch Processing Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isBatchModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
-        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Settings size={18} className="text-blue-400" />
-            Batch Process Dataset
-          </h2>
-          <button 
-            onClick={() => setIsBatchModalOpen(false)}
-            className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isBatchModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
         <div className="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
@@ -885,7 +870,7 @@ export const TagEditor: React.FC = () => {
               value={batchActivationTags}
               onChange={e => setBatchActivationTags(e.target.value)}
               placeholder="e.g., sakura, 1girl"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
             />
             <p className="text-xs text-zinc-500">Added at the very front. Replaces previous activation tags.</p>
           </div>
@@ -897,7 +882,7 @@ export const TagEditor: React.FC = () => {
               value={batchEmphasizeTags}
               onChange={e => setBatchEmphasizeTags(e.target.value)}
               placeholder="e.g., solo, long hair"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
             />
             <p className="text-xs text-zinc-500">Moved right after activation tags (only if they already exist in the file).</p>
           </div>
@@ -909,7 +894,7 @@ export const TagEditor: React.FC = () => {
               value={batchRemoveTags}
               onChange={e => setBatchRemoveTags(e.target.value)}
               placeholder="e.g., blurry, bad anatomy"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
             />
             <p className="text-xs text-zinc-500">Completely deleted from all files.</p>
           </div>
@@ -920,7 +905,7 @@ export const TagEditor: React.FC = () => {
               id="renameSeq"
               checked={batchRename}
               onChange={e => setBatchRename(e.target.checked)}
-              className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
+              className="w-4 h-4 rounded border-white/20 bg-black/50 text-white focus:ring-white/50 focus:ring-offset-0"
             />
             <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
               Rename files sequentially (1.jpg, 1.txt, ...)
@@ -932,27 +917,27 @@ export const TagEditor: React.FC = () => {
           <div className="px-5 pb-2">
             <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
               <div 
-                className="h-full bg-blue-500 transition-all duration-300 ease-out"
+                className="h-full bg-white transition-all duration-300 ease-out"
                 style={{ width: `${batchProgress}%` }}
               />
             </div>
           </div>
         )}
 
-        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/40">
+        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
           <button 
             onClick={() => setIsBatchModalOpen(false)}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
           >
             Cancel
           </button>
           <button 
             onClick={handleBatchProcess}
             disabled={batchStatus !== 'idle'}
-            className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+            className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
           >
             {batchStatus === 'processing' ? (
-              <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
             ) : batchStatus === 'done' ? (
               <Save size={16} />
             ) : (
