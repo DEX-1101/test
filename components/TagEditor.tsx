@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2 } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2, Archive, Download, UploadCloud } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -21,6 +21,8 @@ import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import ReactCrop, { type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { wdTagger, deleteModelFromDB, checkModelExists } from '../lib/wdTagger';
+import { ZipWriter, BlobWriter, BlobReader, TextReader } from '@zip.js/zip.js';
+import { uploadFile } from '@huggingface/hub';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -145,22 +147,49 @@ export const TagEditor: React.FC = () => {
 
   // Auto Tag & Batch Processing State
   const [isAutoTagModalOpen, setIsAutoTagModalOpen] = useState(false);
-  const [batchActivationTags, setBatchActivationTags] = useState('');
-  const [batchEmphasizeTags, setBatchEmphasizeTags] = useState('');
-  const [batchRemoveTags, setBatchRemoveTags] = useState('');
-  const [batchRename, setBatchRename] = useState(false);
+  const [batchActivationTags, setBatchActivationTags] = useState(() => localStorage.getItem('batch_activation') || '');
+  const [batchEmphasizeTags, setBatchEmphasizeTags] = useState(() => localStorage.getItem('batch_emphasize') || '');
+  const [batchRemoveTags, setBatchRemoveTags] = useState(() => localStorage.getItem('batch_remove') || '');
+  const [batchRename, setBatchRename] = useState(() => localStorage.getItem('batch_rename') === 'true');
   const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
   const [batchProgress, setBatchProgress] = useState(0);
 
   // WD Tagger State
-  const [selectedModelId, setSelectedModelId] = useState('eva02-v3');
+  const [selectedModelId, setSelectedModelId] = useState(() => localStorage.getItem('wd_modelId') || 'eva02-v3');
   const [wdStatus, setWdStatus] = useState<'idle' | 'loading' | 'processing' | 'done'>('idle');
   const [wdProgress, setWdProgress] = useState(0);
   const [wdProgressText, setWdProgressText] = useState('');
-  const [wdThreshold, setWdThreshold] = useState(0.35);
-  const [wdCharThreshold, setWdCharThreshold] = useState(0.85);
-  const [wdOverwrite, setWdOverwrite] = useState(false);
+  const [wdThreshold, setWdThreshold] = useState(() => parseFloat(localStorage.getItem('wd_thresh') || '0.35'));
+  const [wdCharThreshold, setWdCharThreshold] = useState(() => parseFloat(localStorage.getItem('wd_charThresh') || '0.85'));
+  const [wdOverwrite, setWdOverwrite] = useState(() => localStorage.getItem('wd_overwrite') === 'true');
   const [wdModelExists, setWdModelExists] = useState(false);
+
+  // ZIP State
+  const [isZipModalOpen, setIsZipModalOpen] = useState(false);
+  const [zipFilename, setZipFilename] = useState('dataset.zip');
+  const [zipPassword, setZipPassword] = useState('');
+  const [zipLegacy, setZipLegacy] = useState(true);
+  const [zipLevel, setZipLevel] = useState<number>(5);
+  const [hfToken, setHfToken] = useState(() => localStorage.getItem('hf_token') || '');
+  const [hfRepo, setHfRepo] = useState(() => localStorage.getItem('hf_repo') || '');
+  const [hfFolder, setHfFolder] = useState('');
+  const [zipStatus, setZipStatus] = useState<'idle' | 'zipping' | 'uploading' | 'done'>('idle');
+  const [zipProgress, setZipProgress] = useState(0);
+  const [zipProgressText, setZipProgressText] = useState('');
+
+  // Save settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('wd_modelId', selectedModelId);
+    localStorage.setItem('wd_thresh', wdThreshold.toString());
+    localStorage.setItem('wd_charThresh', wdCharThreshold.toString());
+    localStorage.setItem('wd_overwrite', wdOverwrite.toString());
+    localStorage.setItem('batch_activation', batchActivationTags);
+    localStorage.setItem('batch_emphasize', batchEmphasizeTags);
+    localStorage.setItem('batch_remove', batchRemoveTags);
+    localStorage.setItem('batch_rename', batchRename.toString());
+    localStorage.setItem('hf_token', hfToken);
+    localStorage.setItem('hf_repo', hfRepo);
+  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo]);
 
   useEffect(() => {
     checkModelExists(selectedModelId).then(exists => setWdModelExists(exists));
@@ -382,6 +411,80 @@ export const TagEditor: React.FC = () => {
       alert('Failed to process batch.');
       setBatchStatus('idle');
       setBatchProgress(0);
+    }
+  };
+
+  const handleCreateZip = async (action: 'download' | 'upload') => {
+    if (!directoryHandle) return;
+    setZipStatus(action === 'download' ? 'zipping' : 'uploading');
+    setZipProgress(0);
+    setZipProgressText('Creating ZIP...');
+
+    try {
+      const zipFileWriter = new BlobWriter();
+      const options: any = { level: zipLevel };
+      if (zipPassword) {
+        options.password = zipPassword;
+        options.zipCrypto = zipLegacy;
+      }
+      const zipWriter = new ZipWriter(zipFileWriter, options);
+
+      const totalFiles = files.length;
+      for (let i = 0; i < totalFiles; i++) {
+        const file = files[i];
+        setZipProgress(Math.round((i / totalFiles) * (action === 'download' ? 100 : 50)));
+        setZipProgressText(`Zipping ${file.name}...`);
+        
+        const imgFile = await file.imageHandle.getFile();
+        await zipWriter.add(file.name, new BlobReader(imgFile));
+        
+        const tagsStr = file.tags.join(', ');
+        await zipWriter.add(`${file.baseName}.txt`, new TextReader(tagsStr));
+      }
+      
+      await zipWriter.close();
+      const zipBlob = await zipFileWriter.getData();
+
+      if (action === 'download') {
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = zipFilename || 'dataset.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+        setZipStatus('done');
+        setZipProgress(100);
+        setZipProgressText('Downloaded successfully!');
+      } else if (action === 'upload') {
+        setZipProgress(50);
+        setZipProgressText('Uploading to Hugging Face...');
+        
+        const pathInRepo = hfFolder ? `${hfFolder}/${zipFilename || 'dataset.zip'}` : (zipFilename || 'dataset.zip');
+        
+        await uploadFile({
+          repo: { type: 'dataset', name: hfRepo },
+          credentials: { accessToken: hfToken },
+          file: {
+            path: pathInRepo,
+            content: zipBlob
+          }
+        });
+        
+        setZipStatus('done');
+        setZipProgress(100);
+        setZipProgressText('Uploaded successfully!');
+      }
+      
+      setTimeout(() => {
+        setZipStatus('idle');
+        setZipProgress(0);
+        setZipProgressText('');
+      }, 3000);
+
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to ${action} ZIP: ${err instanceof Error ? err.message : String(err)}`);
+      setZipStatus('idle');
     }
   };
 
@@ -846,17 +949,17 @@ export const TagEditor: React.FC = () => {
                         onClick={handleUndo} 
                         disabled={tagState.index <= 0} 
                         className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
-                        title="Undo Tag (Ctrl+Z)"
+                        title="Undo (Ctrl+Z)"
                       >
-                        <Undo2 size={16}/> <span className="text-xs font-medium">Tag</span>
+                        <Undo2 size={16}/>
                       </button>
                       <button 
                         onClick={handleRedo} 
                         disabled={tagState.index >= tagState.history.length - 1} 
                         className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
-                        title="Redo Tag (Ctrl+Shift+Z)"
+                        title="Redo (Ctrl+Shift+Z)"
                       >
-                        <Redo2 size={16}/> <span className="text-xs font-medium">Tag</span>
+                        <Redo2 size={16}/>
                       </button>
                     </div>
 
@@ -866,6 +969,14 @@ export const TagEditor: React.FC = () => {
                       title="Auto-tag & Batch Process"
                     >
                       <Wand2 size={16}/> Auto Tag
+                    </button>
+
+                    <button 
+                      onClick={() => setIsZipModalOpen(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      title="Export to ZIP / Hugging Face"
+                    >
+                      <Archive size={16}/> ZIP
                     </button>
 
                     <button 
@@ -1053,29 +1164,50 @@ export const TagEditor: React.FC = () => {
           <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
-              <input 
-                type="text" value={batchActivationTags} onChange={e => setBatchActivationTags(e.target.value)}
-                placeholder="e.g., sakura, 1girl"
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-              />
+              <div className="relative flex items-center">
+                <input 
+                  type="text" value={batchActivationTags} onChange={e => setBatchActivationTags(e.target.value)}
+                  placeholder="e.g., sakura, 1girl"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-8 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                {batchActivationTags && (
+                  <button onClick={() => setBatchActivationTags('')} className="absolute right-2 p-1 text-zinc-400 hover:text-white transition-colors">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
-              <input 
-                type="text" value={batchEmphasizeTags} onChange={e => setBatchEmphasizeTags(e.target.value)}
-                placeholder="e.g., solo, long hair"
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-              />
+              <div className="relative flex items-center">
+                <input 
+                  type="text" value={batchEmphasizeTags} onChange={e => setBatchEmphasizeTags(e.target.value)}
+                  placeholder="e.g., solo, long hair"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-8 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                {batchEmphasizeTags && (
+                  <button onClick={() => setBatchEmphasizeTags('')} className="absolute right-2 p-1 text-zinc-400 hover:text-white transition-colors">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
-              <input 
-                type="text" value={batchRemoveTags} onChange={e => setBatchRemoveTags(e.target.value)}
-                placeholder="e.g., blurry, bad anatomy"
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-              />
+              <div className="relative flex items-center">
+                <input 
+                  type="text" value={batchRemoveTags} onChange={e => setBatchRemoveTags(e.target.value)}
+                  placeholder="e.g., blurry, bad anatomy"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-8 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                {batchRemoveTags && (
+                  <button onClick={() => setBatchRemoveTags('')} className="absolute right-2 p-1 text-zinc-400 hover:text-white transition-colors">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
@@ -1117,6 +1249,147 @@ export const TagEditor: React.FC = () => {
               <div 
                 className={`h-full transition-all duration-300 ease-out ${wdStatus !== 'idle' ? 'bg-purple-500' : 'bg-blue-500'}`}
                 style={{ width: `${wdStatus !== 'idle' ? wdProgress : batchProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Floating ZIP Overlay */}
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+        <button 
+          onClick={() => setIsZipModalOpen(false)}
+          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
+        >
+          <X size={18} />
+        </button>
+        
+        <div className="p-6 pt-8 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1 relative">
+          {/* Left Column: ZIP Options */}
+          <div className="flex flex-col gap-4">
+            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
+              <Archive size={16} className="text-zinc-400" /> ZIP Options
+            </h3>
+            
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Filename</label>
+              <input 
+                type="text" value={zipFilename} onChange={e => setZipFilename(e.target.value)}
+                placeholder="dataset.zip"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Password (Optional)</label>
+              <input 
+                type="password" value={zipPassword} onChange={e => setZipPassword(e.target.value)}
+                placeholder="Leave blank for no password"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5">
+              <input 
+                type="checkbox" id="zipLegacy"
+                checked={zipLegacy} onChange={e => setZipLegacy(e.target.checked)}
+                disabled={!zipPassword}
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0 disabled:opacity-50"
+              />
+              <label htmlFor="zipLegacy" className={`text-sm font-medium cursor-pointer select-none leading-tight ${!zipPassword ? 'text-zinc-500' : 'text-zinc-300'}`}>
+                Use Legacy Encryption (ZipCrypto)
+              </label>
+            </div>
+
+            <div className="space-y-1.5 mt-auto">
+              <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                <span>Compression Level</span>
+                <span className="text-zinc-500">{zipLevel === 0 ? 'Store' : zipLevel}</span>
+              </label>
+              <input 
+                type="range" min="0" max="9" step="1"
+                value={zipLevel} onChange={e => setZipLevel(parseInt(e.target.value))}
+                className="w-full accent-blue-500"
+              />
+            </div>
+
+            <button 
+              onClick={() => handleCreateZip('download')}
+              disabled={zipStatus !== 'idle'}
+              className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
+            >
+              {zipStatus === 'zipping' ? (
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              ) : zipStatus === 'done' ? (
+                <Save size={16} />
+              ) : (
+                <Download size={16} />
+              )}
+              {zipStatus === 'zipping' ? 'Creating ZIP...' : 'Download ZIP'}
+            </button>
+          </div>
+
+          {/* Right Column: Hugging Face Upload */}
+          <div className="flex flex-col gap-4">
+            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
+              <UploadCloud size={16} className="text-zinc-400" /> Hugging Face Upload
+            </h3>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Access Token (Write)</label>
+              <input 
+                type="password" value={hfToken} onChange={e => setHfToken(e.target.value)}
+                placeholder="hf_..."
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Dataset Repo ID</label>
+              <input 
+                type="text" value={hfRepo} onChange={e => setHfRepo(e.target.value)}
+                placeholder="username/dataset-name"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Folder in Repo (Optional)</label>
+              <input 
+                type="text" value={hfFolder} onChange={e => setHfFolder(e.target.value)}
+                placeholder="e.g., data/images"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <button 
+              onClick={() => handleCreateZip('upload')}
+              disabled={zipStatus !== 'idle' || !hfToken || !hfRepo}
+              className="w-full py-2.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
+            >
+              {zipStatus === 'uploading' || zipStatus === 'zipping' ? (
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              ) : zipStatus === 'done' ? (
+                <Save size={16} />
+              ) : (
+                <UploadCloud size={16} />
+              )}
+              {zipStatus === 'zipping' ? 'Creating ZIP...' : zipStatus === 'uploading' ? 'Uploading...' : 'Upload to Hugging Face'}
+            </button>
+          </div>
+        </div>
+
+        {/* ZIP Progress Bar */}
+        {zipStatus !== 'idle' && (
+          <div className="px-5 pb-4 bg-black/20 pt-3 border-t border-white/10">
+            <div className="flex justify-between text-xs text-zinc-400 font-medium mb-1.5">
+              <span>{zipProgressText}</span>
+              <span>{zipProgress}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-300 ease-out"
+                style={{ width: `${zipProgress}%` }}
               />
             </div>
           </div>
