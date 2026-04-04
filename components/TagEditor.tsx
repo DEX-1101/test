@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2, Archive, Download, UploadCloud } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2, Archive, Download, UploadCloud, Paintbrush, MousePointer2 } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -176,6 +176,17 @@ export const TagEditor: React.FC = () => {
   const [zipStatus, setZipStatus] = useState<'idle' | 'zipping' | 'uploading' | 'done'>('idle');
   const [zipProgress, setZipProgress] = useState(0);
   const [zipProgressText, setZipProgressText] = useState('');
+
+  // Inpaint State
+  const [isInpaintOpen, setIsInpaintOpen] = useState(false);
+  const [brushSize, setBrushSize] = useState(40);
+  const [brushColor, setBrushColor] = useState('#ff0000');
+  const [inpaintMode, setInpaintMode] = useState<'draw' | 'pan'>('draw');
+  const inpaintCanvasRef = useRef<HTMLCanvasElement>(null);
+  const inpaintCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [inpaintCursorPos, setInpaintCursorPos] = useState({ x: -1000, y: -1000 });
+  const [isHoveringCanvas, setIsHoveringCanvas] = useState(false);
 
   // Save settings to localStorage
   useEffect(() => {
@@ -486,6 +497,120 @@ export const TagEditor: React.FC = () => {
       alert(`Failed to ${action} ZIP: ${err instanceof Error ? err.message : String(err)}`);
       setZipStatus('idle');
     }
+  };
+
+  useEffect(() => {
+    if (isInpaintOpen && previewUrl && inpaintCanvasRef.current) {
+      const canvas = inpaintCanvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      inpaintCtxRef.current = ctx;
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = previewUrl;
+    }
+  }, [isInpaintOpen, previewUrl]);
+
+  const getInpaintCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = inpaintCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
+    }
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+      clientX,
+      clientY
+    };
+  };
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (inpaintMode !== 'draw') return;
+    setIsDrawing(true);
+    draw(e);
+  };
+
+  const stopDrawing = () => {
+    if (isDrawing) {
+      setIsDrawing(false);
+      if (inpaintCtxRef.current) {
+        inpaintCtxRef.current.beginPath();
+      }
+    }
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const coords = getInpaintCoordinates(e);
+    if (!coords) return;
+
+    if (!('touches' in e)) {
+      setInpaintCursorPos({ x: coords.clientX, y: coords.clientY });
+    }
+
+    if (!isDrawing || inpaintMode !== 'draw') return;
+
+    const ctx = inpaintCtxRef.current;
+    if (!ctx) return;
+
+    ctx.lineWidth = brushSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = brushColor;
+
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(coords.x, coords.y);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    setInpaintCursorPos({ x: e.clientX, y: e.clientY });
+    if (isDrawing) {
+      draw(e);
+    }
+  };
+
+  const handleApplyInpaint = async () => {
+    if (!inpaintCanvasRef.current || !directoryHandle || selectedIndex === -1) return;
+    
+    const canvas = inpaintCanvasRef.current;
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      
+      try {
+        const fileEntry = files[selectedIndex];
+        // @ts-ignore
+        const writable = await fileEntry.imageHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        
+        const newUrl = URL.createObjectURL(blob);
+        urlCache.current.set(fileEntry.name, newUrl);
+        setPreviewUrl(newUrl);
+        
+        setIsInpaintOpen(false);
+      } catch (err) {
+        console.error("Failed to save inpainted image", err);
+        alert("Failed to save image.");
+      }
+    }, 'image/jpeg', 0.95);
   };
 
   const updateTags = (updater: string[] | ((prev: string[]) => string[])) => {
@@ -872,7 +997,7 @@ export const TagEditor: React.FC = () => {
                     index: 0
                   });
                 }}
-                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
+                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.5)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
               >
                 <Thumbnail imageHandle={file.imageHandle} name={file.name} urlCache={urlCache} />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
@@ -920,7 +1045,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -977,6 +1102,22 @@ export const TagEditor: React.FC = () => {
                       title="Export to ZIP / Hugging Face"
                     >
                       <Archive size={16}/> ZIP
+                    </button>
+
+                    <button 
+                      onClick={() => setIsInpaintOpen(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      title="Inpaint / Draw"
+                    >
+                      <Paintbrush size={16}/> Inpaint
+                    </button>
+
+                    <button 
+                      onClick={() => setIsInpaintOpen(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      title="Inpaint / Draw"
+                    >
+                      <Paintbrush size={16}/> Inpaint
                     </button>
 
                     <button 
@@ -1267,10 +1408,6 @@ export const TagEditor: React.FC = () => {
         <div className="p-6 pt-8 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1 relative">
           {/* Left Column: ZIP Options */}
           <div className="flex flex-col gap-4">
-            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
-              <Archive size={16} className="text-zinc-400" /> ZIP Options
-            </h3>
-            
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Filename</label>
               <input 
@@ -1331,10 +1468,6 @@ export const TagEditor: React.FC = () => {
 
           {/* Right Column: Hugging Face Upload */}
           <div className="flex flex-col gap-4">
-            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
-              <UploadCloud size={16} className="text-zinc-400" /> Hugging Face Upload
-            </h3>
-
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Access Token (Write)</label>
               <input 
@@ -1378,23 +1511,150 @@ export const TagEditor: React.FC = () => {
             </button>
           </div>
         </div>
+      </div>
 
-        {/* ZIP Progress Bar */}
-        {zipStatus !== 'idle' && (
-          <div className="px-5 pb-4 bg-black/20 pt-3 border-t border-white/10">
-            <div className="flex justify-between text-xs text-zinc-400 font-medium mb-1.5">
-              <span>{zipProgressText}</span>
-              <span>{zipProgress}%</span>
+      {/* Floating Inpaint Overlay */}
+      <div className={`absolute inset-4 flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`}>
+        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Paintbrush size={18} className="text-pink-400" />
+              Inpaint / Draw
+            </h2>
+            
+            <div className="h-6 w-px bg-white/10 mx-2"></div>
+            
+            {/* Tools */}
+            <div className="flex items-center gap-2 bg-black/50 p-1 rounded-lg border border-white/10">
+              <button 
+                onClick={() => setInpaintMode('draw')}
+                className={`p-2 rounded-md transition-colors ${inpaintMode === 'draw' ? 'bg-pink-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                title="Draw Mode"
+              >
+                <Paintbrush size={16} />
+              </button>
+              <button 
+                onClick={() => setInpaintMode('pan')}
+                className={`p-2 rounded-md transition-colors ${inpaintMode === 'pan' ? 'bg-blue-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                title="Pan Mode"
+              >
+                <MousePointer2 size={16} />
+              </button>
             </div>
-            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-blue-500 transition-all duration-300 ease-out"
-                style={{ width: `${zipProgress}%` }}
+
+            <div className="flex items-center gap-3 ml-4">
+              <label className="text-sm text-zinc-300">Size:</label>
+              <input 
+                type="range" min="1" max="200" 
+                value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))}
+                className="w-32 accent-pink-500"
+              />
+              <span className="text-xs text-zinc-500 w-8">{brushSize}px</span>
+            </div>
+
+            <div className="flex items-center gap-3 ml-4">
+              <label className="text-sm text-zinc-300">Color:</label>
+              <input 
+                type="color" 
+                value={brushColor} onChange={e => setBrushColor(e.target.value)}
+                className="w-8 h-8 rounded cursor-pointer bg-transparent border-0 p-0"
               />
             </div>
           </div>
-        )}
+
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsInpaintOpen(false)}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleApplyInpaint}
+              className="px-6 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors"
+            >
+              <Save size={16} />
+              Apply
+            </button>
+          </div>
+        </div>
+
+        <div 
+          className="flex-1 relative bg-black/80 overflow-hidden flex items-center justify-center"
+          onMouseEnter={() => setIsHoveringCanvas(true)}
+          onMouseLeave={() => {
+            setIsHoveringCanvas(false);
+            stopDrawing();
+          }}
+        >
+          <TransformWrapper 
+            disabled={inpaintMode === 'draw'} 
+            centerOnInit 
+            minScale={0.1} 
+            maxScale={10} 
+            wheel={{ step: 0.1 }}
+          >
+            <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <canvas
+                ref={inpaintCanvasRef}
+                onMouseDown={startDrawing}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={stopDrawing}
+                onTouchStart={startDrawing}
+                onTouchMove={handleCanvasMouseMove}
+                onTouchEnd={stopDrawing}
+                className={`max-w-full max-h-full object-contain shadow-2xl ${inpaintMode === 'draw' ? 'cursor-none' : 'cursor-grab active:cursor-grabbing'}`}
+              />
+            </TransformComponent>
+          </TransformWrapper>
+
+          {/* Custom Cursor for Brush */}
+          {isHoveringCanvas && inpaintMode === 'draw' && (
+            <div 
+              className="fixed pointer-events-none rounded-full border-2 border-white mix-blend-difference z-50 transform -translate-x-1/2 -translate-y-1/2"
+              style={{
+                left: inpaintCursorPos.x,
+                top: inpaintCursorPos.y,
+                width: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().width / inpaintCanvasRef.current.width) : 1),
+                height: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().height / inpaintCanvasRef.current.height) : 1),
+                backgroundColor: brushColor + '40'
+              }}
+            />
+          )}
+        </div>
       </div>
+
+      {/* Global Floating Progress Bar */}
+      {(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 z-[100] animate-in slide-in-from-top-4 fade-in duration-300">
+          <div className="flex justify-between text-sm text-white font-medium mb-2">
+            <span>
+              {wdStatus !== 'idle' ? wdProgressText : 
+               batchStatus !== 'idle' ? 'Processing batch...' : 
+               zipProgressText}
+            </span>
+            <span>
+              {wdStatus !== 'idle' ? wdProgress : 
+               batchStatus !== 'idle' ? batchProgress : 
+               zipProgress}%
+            </span>
+          </div>
+          <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-300 ease-out ${
+                wdStatus !== 'idle' ? 'bg-purple-500' : 
+                batchStatus !== 'idle' ? 'bg-blue-500' : 
+                'bg-orange-500'
+              }`}
+              style={{ width: `${
+                wdStatus !== 'idle' ? wdProgress : 
+                batchStatus !== 'idle' ? batchProgress : 
+                zipProgress
+              }%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
