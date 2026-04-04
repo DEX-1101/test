@@ -199,29 +199,43 @@ export const TagEditor: React.FC = () => {
     };
   }, []);
 
+  const lastLoadedIndex = useRef<number>(-1);
+
   const currentImageHandle = files[selectedIndex]?.imageHandle;
   useEffect(() => {
     if (currentImageHandle) {
       const name = currentImageHandle.name;
       const cached = urlCache.current.get(name);
+      
+      const isNewImage = lastLoadedIndex.current !== selectedIndex;
+      if (isNewImage) {
+        lastLoadedIndex.current = selectedIndex;
+      }
+
       if (cached) {
         setPreviewUrl(cached);
-        setImageState({ history: [cached], index: 0 });
+        if (isNewImage) {
+          setImageState({ history: [cached], index: 0 });
+        }
       } else {
         currentImageHandle.getFile().then(file => {
           const objectUrl = URL.createObjectURL(file);
           urlCache.current.set(name, objectUrl);
-          if (files[selectedIndex]?.name === name) {
+          // Only update state if we haven't switched to another image while loading
+          if (lastLoadedIndex.current === selectedIndex) {
             setPreviewUrl(objectUrl);
-            setImageState({ history: [objectUrl], index: 0 });
+            if (isNewImage) {
+              setImageState({ history: [objectUrl], index: 0 });
+            }
           }
         });
       }
     } else {
       setPreviewUrl('');
       setImageState({ history: [], index: 0 });
+      lastLoadedIndex.current = -1;
     }
-  }, [currentImageHandle, selectedIndex, files]);
+  }, [currentImageHandle, selectedIndex]);
 
   // Preload adjacent images for instant switching
   useEffect(() => {
