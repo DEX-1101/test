@@ -238,7 +238,7 @@ const App: React.FC = () => {
   const isBusy = status === AppStatus.ANALYZING_FACES || status === AppStatus.GENERATING_LAYOUT || status === AppStatus.GENERATING_BACKGROUND;
 
   return (
-    <div className={`min-h-screen bg-background text-gray-200 flex flex-col items-center p-4 selection:bg-accent selection:text-white ${mode === 'MOSAIC' ? 'h-screen overflow-hidden' : ''}`}>
+    <div className={`min-h-screen bg-background text-gray-200 flex flex-col items-center p-4 selection:bg-accent selection:text-white ${mode === 'MOSAIC' || mode === 'TAGS' ? 'h-screen overflow-hidden' : ''}`}>
       
       {/* --- SPLASH SCREEN --- */}
       <div 

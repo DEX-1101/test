@@ -1,6 +1,22 @@
 import React, { useState } from 'react';
 import { FolderOpen, Save, X, Image as ImageIcon, Tag } from 'lucide-react';
-import { motion, Reorder } from 'motion/react';
+import { 
+  DndContext, 
+  closestCenter, 
+  KeyboardSensor, 
+  PointerSensor, 
+  useSensor, 
+  useSensors, 
+  DragEndEvent 
+} from '@dnd-kit/core';
+import { 
+  arrayMove, 
+  SortableContext, 
+  sortableKeyboardCoordinates, 
+  rectSortingStrategy, 
+  useSortable 
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -10,6 +26,43 @@ interface FileEntry {
   imageUrl: string;
   tags: string[];
 }
+
+const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => void }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: tag });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`flex items-center gap-1.5 bg-[#2a2d45] border border-[#3a3d55] text-[#d0d2e6] px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-[#323652] cursor-grab active:cursor-grabbing relative ${isDragging ? 'shadow-lg shadow-black/50 scale-105' : ''}`}
+    >
+      <span>{tag}</span>
+      <button 
+        onPointerDown={(e) => e.stopPropagation()} // Prevent dragging when clicking X
+        onClick={() => onRemove(tag)}
+        className="text-zinc-400 hover:text-white opacity-60 group-hover:opacity-100 transition-opacity ml-1"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+};
 
 export const TagEditor: React.FC = () => {
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -122,10 +175,32 @@ export const TagEditor: React.FC = () => {
     setActiveTags(prev => prev.filter(t => t !== tagToRemove));
   };
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5, // 5px movement before drag starts, allows clicking buttons
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setActiveTags((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
   return (
-    <div className="w-full h-full min-h-[600px] flex bg-zinc-900/80 rounded-xl border border-white/5 backdrop-blur-sm overflow-hidden">
+    <div className="w-full h-full flex bg-zinc-900/80 rounded-xl border border-white/5 backdrop-blur-sm overflow-hidden">
       {/* Sidebar */}
-      <div className="w-80 border-r border-white/5 flex flex-col bg-black/20 shrink-0">
+      <div className="w-[400px] border-r border-white/5 flex flex-col bg-black/20 shrink-0">
         <div className="p-4 border-b border-white/5">
           <button 
             onClick={handleOpenFolder}
@@ -136,7 +211,7 @@ export const TagEditor: React.FC = () => {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             {files.map((file, idx) => (
               <div 
                 key={file.name}
@@ -196,31 +271,25 @@ export const TagEditor: React.FC = () => {
                 </div>
                 
                 <div className="flex-1 overflow-y-auto custom-scrollbar mb-4 bg-black/20 rounded-lg border border-white/5 p-4">
-                    <Reorder.Group 
-                        axis="x" 
-                        values={activeTags} 
-                        onReorder={setActiveTags} 
-                        className="flex flex-wrap gap-2"
+                    <DndContext 
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
                     >
-                        {activeTags.map((tag) => (
-                            <Reorder.Item 
-                                key={tag} 
-                                value={tag}
-                                className="flex items-center gap-1.5 bg-[#2a2d45] border border-[#3a3d55] text-[#d0d2e6] px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-[#323652] cursor-grab active:cursor-grabbing relative"
-                            >
-                                <span>{tag}</span>
-                                <button 
-                                    onClick={() => handleRemoveTag(tag)}
-                                    className="text-zinc-400 hover:text-white opacity-60 group-hover:opacity-100 transition-opacity ml-1"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </Reorder.Item>
-                        ))}
-                        {activeTags.length === 0 && (
-                            <span className="text-zinc-500 text-sm italic p-1">No tags found. Add some below!</span>
-                        )}
-                    </Reorder.Group>
+                        <SortableContext 
+                            items={activeTags}
+                            strategy={rectSortingStrategy}
+                        >
+                            <div className="flex flex-wrap gap-2">
+                                {activeTags.map((tag) => (
+                                    <SortableTag key={tag} tag={tag} onRemove={handleRemoveTag} />
+                                ))}
+                                {activeTags.length === 0 && (
+                                    <span className="text-zinc-500 text-sm italic p-1">No tags found. Add some below!</span>
+                                )}
+                            </div>
+                        </SortableContext>
+                    </DndContext>
                 </div>
 
                 <div className="mt-auto shrink-0">
