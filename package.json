@@ -16,6 +16,7 @@
     "@zip.js/zip.js": "2.7.34",
     "lucide-react": "^0.562.0",
     "motion": "^12.38.0",
+    "onnxruntime-web": "^1.24.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-image-crop": "^11.0.10",

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2 } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -20,6 +20,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import ReactCrop, { type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
+import { wdTagger, deleteModelFromDB, checkModelExists } from '../lib/wdTagger';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -150,6 +151,109 @@ export const TagEditor: React.FC = () => {
   const [batchRename, setBatchRename] = useState(false);
   const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
   const [batchProgress, setBatchProgress] = useState(0);
+
+  // WD Tagger State
+  const [isWdModalOpen, setIsWdModalOpen] = useState(false);
+  const [wdStatus, setWdStatus] = useState<'idle' | 'loading' | 'processing' | 'done'>('idle');
+  const [wdProgress, setWdProgress] = useState(0);
+  const [wdProgressText, setWdProgressText] = useState('');
+  const [wdThreshold, setWdThreshold] = useState(0.35);
+  const [wdCharThreshold, setWdCharThreshold] = useState(0.85);
+  const [wdOverwrite, setWdOverwrite] = useState(false);
+  const [wdModelExists, setWdModelExists] = useState(false);
+
+  useEffect(() => {
+    checkModelExists().then(exists => setWdModelExists(exists));
+  }, [isWdModalOpen]);
+
+  const handleWdProcess = async () => {
+    if (!directoryHandle) return;
+    setWdStatus('loading');
+    setWdProgress(0);
+    setWdProgressText('Initializing WD Tagger...');
+
+    try {
+      await wdTagger.init((progress, status) => {
+        setWdProgress(progress);
+        setWdProgressText(status);
+      });
+
+      setWdStatus('processing');
+      const updatedFiles = [...files];
+      const totalSteps = updatedFiles.length;
+
+      for (let i = 0; i < updatedFiles.length; i++) {
+        const file = updatedFiles[i];
+        
+        // Skip if not overwriting and tags already exist
+        if (!wdOverwrite && file.tags.length > 0) {
+          setWdProgress(Math.round(((i + 1) / totalSteps) * 100));
+          setWdProgressText(`Skipping ${file.name}...`);
+          continue;
+        }
+
+        setWdProgress(Math.round(((i + 1) / totalSteps) * 100));
+        setWdProgressText(`Tagging ${file.name}...`);
+
+        // Load image to HTMLImageElement
+        const imgFile = await file.imageHandle.getFile();
+        const imgUrl = URL.createObjectURL(imgFile);
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = imgUrl;
+        });
+
+        const generatedTags = await wdTagger.predict(img, wdThreshold, wdCharThreshold);
+        URL.revokeObjectURL(imgUrl);
+
+        updatedFiles[i].tags = generatedTags;
+
+        let txtHandle = file.textHandle;
+        if (!txtHandle) {
+          txtHandle = await directoryHandle.getFileHandle(`${file.baseName}.txt`, { create: true });
+          updatedFiles[i].textHandle = txtHandle;
+        }
+        
+        // @ts-ignore
+        const writable = await txtHandle.createWritable();
+        await writable.write(generatedTags.join(', '));
+        await writable.close();
+      }
+
+      setFiles(updatedFiles);
+      if (selectedIndex !== -1) {
+        setTagState({
+          current: updatedFiles[selectedIndex].tags,
+          history: [updatedFiles[selectedIndex].tags],
+          index: 0
+        });
+      }
+      setWdStatus('done');
+      setWdProgress(100);
+      setWdProgressText('Done!');
+      setTimeout(() => {
+        setWdStatus('idle');
+        setWdProgress(0);
+        setWdProgressText('');
+      }, 1500);
+
+    } catch (err) {
+      console.error(err);
+      alert('Failed to process WD Tagger.');
+      setWdStatus('idle');
+      setWdProgress(0);
+      setWdProgressText('');
+    }
+  };
+
+  const handleDeleteModel = async () => {
+    if (confirm('Are you sure you want to delete the downloaded model? It will need to be downloaded again (1.2GB).')) {
+      await deleteModelFromDB();
+      setWdModelExists(false);
+    }
+  };
 
   const cleanAndSplitTags = (tagsStr: string) => {
     return tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0);
@@ -713,7 +817,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isBatchModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isBatchModalOpen || isWdModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -761,6 +865,14 @@ export const TagEditor: React.FC = () => {
                       className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
                     >
                       <Settings size={16}/> Batch
+                    </button>
+
+                    <button 
+                      onClick={() => setIsWdModalOpen(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      title="Auto-tag with WD Tagger (EVA02 Large)"
+                    >
+                      <Wand2 size={16}/> Auto-Tag
                     </button>
 
                     <button 
@@ -944,6 +1056,113 @@ export const TagEditor: React.FC = () => {
               <Settings size={16} />
             )}
             {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Apply to All'}
+          </button>
+        </div>
+      </div>
+
+      {/* Floating WD Tagger Overlay */}
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isWdModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+        <div className="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Wand2 size={18} className="text-purple-400" />
+              WD Tagger (EVA02 Large)
+            </h2>
+            {wdModelExists && (
+              <button 
+                onClick={handleDeleteModel}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-colors flex items-center gap-1.5"
+                title="Delete downloaded model from cache"
+              >
+                <Trash2 size={14} /> Delete Model
+              </button>
+            )}
+          </div>
+          
+          <p className="text-sm text-zinc-400">
+            Automatically generate tags for all images using the SmilingWolf/wd-eva02-large-tagger-v3 model.
+            The model is ~1.2GB and will be downloaded on first run and cached in your browser.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4 mt-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                <span>General Threshold</span>
+                <span className="text-zinc-500">{wdThreshold.toFixed(2)}</span>
+              </label>
+              <input 
+                type="range"
+                min="0" max="1" step="0.01"
+                value={wdThreshold}
+                onChange={e => setWdThreshold(parseFloat(e.target.value))}
+                className="w-full accent-purple-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                <span>Character Threshold</span>
+                <span className="text-zinc-500">{wdCharThreshold.toFixed(2)}</span>
+              </label>
+              <input 
+                type="range"
+                min="0" max="1" step="0.01"
+                value={wdCharThreshold}
+                onChange={e => setWdCharThreshold(parseFloat(e.target.value))}
+                className="w-full accent-purple-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
+            <input 
+              type="checkbox"
+              id="wdOverwrite"
+              checked={wdOverwrite}
+              onChange={e => setWdOverwrite(e.target.checked)}
+              className="w-4 h-4 rounded border-white/20 bg-black/50 text-purple-500 focus:ring-purple-500/50 focus:ring-offset-0"
+            />
+            <label htmlFor="wdOverwrite" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
+              Overwrite existing tags (if unchecked, skips images that already have tags)
+            </label>
+          </div>
+        </div>
+
+        {wdStatus !== 'idle' && (
+          <div className="px-5 pb-2 flex flex-col gap-1">
+            <div className="flex justify-between text-xs text-zinc-400 font-medium">
+              <span>{wdProgressText}</span>
+              <span>{wdProgress}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-purple-500 transition-all duration-300 ease-out"
+                style={{ width: `${wdProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
+          <button 
+            onClick={() => setIsWdModalOpen(false)}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleWdProcess}
+            disabled={wdStatus !== 'idle'}
+            className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+          >
+            {wdStatus === 'loading' || wdStatus === 'processing' ? (
+              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+            ) : wdStatus === 'done' ? (
+              <Save size={16} />
+            ) : (
+              <Wand2 size={16} />
+            )}
+            {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? 'Tagging...' : wdStatus === 'done' ? 'Done!' : 'Start Auto-Tagging'}
           </button>
         </div>
       </div>
