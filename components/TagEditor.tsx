@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -141,6 +141,132 @@ export const TagEditor: React.FC = () => {
   const [isCropping, setIsCropping] = useState(false);
   const previewImgRef = useRef<HTMLImageElement>(null);
   const urlCache = useRef<Map<string, string>>(new Map());
+
+  // Batch Processing State
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchActivationTags, setBatchActivationTags] = useState('');
+  const [batchEmphasizeTags, setBatchEmphasizeTags] = useState('');
+  const [batchRemoveTags, setBatchRemoveTags] = useState('');
+  const [batchRename, setBatchRename] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
+
+  const cleanAndSplitTags = (tagsStr: string) => {
+    return tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0);
+  };
+
+  const handleBatchProcess = async () => {
+    if (!directoryHandle) return;
+    setBatchStatus('processing');
+
+    try {
+      const actTags = cleanAndSplitTags(batchActivationTags);
+      const emphTags = cleanAndSplitTags(batchEmphasizeTags);
+      const remTags = cleanAndSplitTags(batchRemoveTags);
+
+      let previousActTags: string[] = [];
+      try {
+        const metaHandle = await directoryHandle.getFileHandle('.last_activation_tags.txt');
+        const metaFile = await metaHandle.getFile();
+        const metaText = await metaFile.text();
+        previousActTags = cleanAndSplitTags(metaText);
+      } catch (e) {
+        // Ignore if not found
+      }
+
+      const tagsToDrop = [...remTags, ...previousActTags];
+      const updatedFiles = [...files];
+
+      for (let i = 0; i < updatedFiles.length; i++) {
+        const file = updatedFiles[i];
+        let currentTags = [...file.tags];
+        const originalTags = [...currentTags];
+
+        currentTags = currentTags.filter(t => !tagsToDrop.includes(t));
+        const validEmphTags = emphTags.filter(t => originalTags.includes(t));
+        currentTags = currentTags.filter(t => !validEmphTags.includes(t) && !actTags.includes(t));
+        
+        const finalTags = [...actTags, ...validEmphTags, ...currentTags];
+        const uniqueTags = Array.from(new Set(finalTags));
+
+        updatedFiles[i].tags = uniqueTags;
+
+        let txtHandle = file.textHandle;
+        if (!txtHandle) {
+          txtHandle = await directoryHandle.getFileHandle(`${file.baseName}.txt`, { create: true });
+          updatedFiles[i].textHandle = txtHandle;
+        }
+        
+        // @ts-ignore
+        const writable = await txtHandle.createWritable();
+        await writable.write(uniqueTags.join(', '));
+        await writable.close();
+      }
+
+      try {
+        const metaHandle = await directoryHandle.getFileHandle('.last_activation_tags.txt', { create: true });
+        // @ts-ignore
+        const writable = await metaHandle.createWritable();
+        await writable.write(batchActivationTags);
+        await writable.close();
+      } catch (e) {
+        console.error("Failed to save meta file", e);
+      }
+
+      if (batchRename) {
+        let counter = 1;
+        for (let i = 0; i < updatedFiles.length; i++) {
+          const file = updatedFiles[i];
+          const ext = file.name.substring(file.name.lastIndexOf('.'));
+          const newImgName = `${counter}${ext}`;
+          const newTxtName = `${counter}.txt`;
+
+          if (file.name !== newImgName) {
+            const newImgHandle = await directoryHandle.getFileHandle(newImgName, { create: true });
+            const imgFile = await file.imageHandle.getFile();
+            // @ts-ignore
+            const imgWritable = await newImgHandle.createWritable();
+            await imgWritable.write(imgFile);
+            await imgWritable.close();
+            await directoryHandle.removeEntry(file.name);
+            updatedFiles[i].imageHandle = newImgHandle;
+            updatedFiles[i].name = newImgName;
+            updatedFiles[i].baseName = `${counter}`;
+          }
+
+          if (file.textHandle && file.textHandle.name !== newTxtName) {
+            const newTxtHandle = await directoryHandle.getFileHandle(newTxtName, { create: true });
+            const txtFile = await file.textHandle.getFile();
+            // @ts-ignore
+            const txtWritable = await newTxtHandle.createWritable();
+            await txtWritable.write(txtFile);
+            await txtWritable.close();
+            await directoryHandle.removeEntry(file.textHandle.name);
+            updatedFiles[i].textHandle = newTxtHandle;
+          }
+          counter++;
+        }
+      }
+
+      setFiles(updatedFiles);
+      if (selectedIndex !== -1) {
+        setTagState({
+          current: updatedFiles[selectedIndex].tags,
+          history: [updatedFiles[selectedIndex].tags],
+          index: 0
+        });
+      }
+      setBatchStatus('done');
+      setTimeout(() => {
+        setIsBatchModalOpen(false);
+        setBatchStatus('idle');
+      }, 1500);
+
+    } catch (err) {
+      console.error(err);
+      alert('Failed to process batch.');
+      setBatchStatus('idle');
+    }
+  };
 
   const updateTags = (updater: string[] | ((prev: string[]) => string[])) => {
     setTagState(prev => {
@@ -505,7 +631,7 @@ export const TagEditor: React.FC = () => {
     <div className="w-full h-full flex flex-row overflow-hidden bg-[#09090b]">
       {/* Sidebar (Left) */}
       <div className="w-[300px] flex flex-col bg-black/40 border-r border-white/5 shrink-0 overflow-hidden z-10">
-        <div className="p-4 border-b border-white/5">
+        <div className="p-4 border-b border-white/5 flex flex-col gap-2">
           <button 
             onClick={handleOpenFolder}
             className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border border-white/10"
@@ -513,6 +639,15 @@ export const TagEditor: React.FC = () => {
             <FolderOpen size={16} />
             Open Folder
           </button>
+          {files.length > 0 && (
+            <button 
+              onClick={() => setIsBatchModalOpen(true)}
+              className="w-full flex items-center justify-center gap-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 py-2 px-4 rounded-xl transition-colors font-medium text-xs border border-blue-500/20"
+            >
+              <Settings size={14} />
+              Batch Process
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
           <div className="grid grid-cols-3 gap-2">
@@ -715,6 +850,100 @@ export const TagEditor: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Batch Processing Modal */}
+      {isBatchModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#18181b] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Settings size={18} className="text-blue-400" />
+                Batch Process Dataset
+              </h2>
+              <button 
+                onClick={() => setIsBatchModalOpen(false)}
+                className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="p-5 flex flex-col gap-4 overflow-y-auto max-h-[70vh] custom-scrollbar">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
+                <input 
+                  type="text"
+                  value={batchActivationTags}
+                  onChange={e => setBatchActivationTags(e.target.value)}
+                  placeholder="e.g., sakura, 1girl"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+                />
+                <p className="text-xs text-zinc-500">Added at the very front. Replaces previous activation tags.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
+                <input 
+                  type="text"
+                  value={batchEmphasizeTags}
+                  onChange={e => setBatchEmphasizeTags(e.target.value)}
+                  placeholder="e.g., solo, long hair"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+                />
+                <p className="text-xs text-zinc-500">Moved right after activation tags (only if they already exist in the file).</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
+                <input 
+                  type="text"
+                  value={batchRemoveTags}
+                  onChange={e => setBatchRemoveTags(e.target.value)}
+                  placeholder="e.g., blurry, bad anatomy"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+                />
+                <p className="text-xs text-zinc-500">Completely deleted from all files.</p>
+              </div>
+
+              <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
+                <input 
+                  type="checkbox"
+                  id="renameSeq"
+                  checked={batchRename}
+                  onChange={e => setBatchRename(e.target.checked)}
+                  className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
+                />
+                <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
+                  Rename files sequentially (1.jpg, 1.txt, ...)
+                </label>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
+              <button 
+                onClick={() => setIsBatchModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleBatchProcess}
+                disabled={batchStatus !== 'idle'}
+                className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+              >
+                {batchStatus === 'processing' ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : batchStatus === 'done' ? (
+                  <Save size={16} />
+                ) : (
+                  <Settings size={16} />
+                )}
+                {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Apply to All'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
