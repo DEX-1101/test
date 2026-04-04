@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FolderOpen, Save, X, Image as ImageIcon, Tag } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, Reorder } from 'motion/react';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -15,9 +15,9 @@ export const TagEditor: React.FC = () => {
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   const handleOpenFolder = async () => {
     try {
@@ -70,12 +70,13 @@ export const TagEditor: React.FC = () => {
     setFiles(fileList);
     if (fileList.length > 0) {
       setSelectedIndex(0);
+      setActiveTags(fileList[0].tags);
     }
   };
 
   const handleSave = async () => {
     if (selectedIndex === -1 || !directoryHandle) return;
-    setIsSaving(true);
+    setSaveStatus('saving');
     try {
       const currentFile = files[selectedIndex];
       let txtHandle = currentFile.textHandle;
@@ -87,75 +88,38 @@ export const TagEditor: React.FC = () => {
 
       // @ts-ignore
       const writable = await txtHandle.createWritable();
-      await writable.write(currentFile.tags.join(', '));
+      await writable.write(activeTags.join(', '));
       await writable.close();
       
-      // Update state to reflect that it now has a text handle
+      // Update state to reflect that it now has a text handle and updated tags
       setFiles(prev => {
         const newFiles = [...prev];
-        newFiles[selectedIndex] = { ...newFiles[selectedIndex], textHandle: txtHandle };
+        newFiles[selectedIndex] = { ...newFiles[selectedIndex], textHandle: txtHandle, tags: activeTags };
         return newFiles;
       });
       
-      alert('Tags saved successfully!');
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (err) {
       console.error(err);
       alert('Failed to save tags.');
-    } finally {
-      setIsSaving(false);
+      setSaveStatus('idle');
     }
   };
 
   const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newTag.trim()) {
       const tagsToAdd = newTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
-      setFiles(prev => {
-        const newFiles = [...prev];
-        const currentTags = newFiles[selectedIndex].tags;
-        newFiles[selectedIndex].tags = [...currentTags, ...tagsToAdd.filter(t => !currentTags.includes(t))];
-        return newFiles;
+      setActiveTags(prev => {
+        const newTags = [...prev, ...tagsToAdd.filter(t => !prev.includes(t))];
+        return newTags;
       });
       setNewTag('');
     }
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    setFiles(prev => {
-      const newFiles = [...prev];
-      newFiles[selectedIndex].tags = newFiles[selectedIndex].tags.filter(t => t !== tagToRemove);
-      return newFiles;
-    });
-  };
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedIdx(index);
-    e.dataTransfer.effectAllowed = "move";
-    // Optional: set drag image to transparent to rely on framer-motion layout
-    const img = new Image();
-    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-    e.dataTransfer.setDragImage(img, 0, 0);
-  };
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    if (draggedIdx === null || draggedIdx === index) return;
-    
-    setFiles(prev => {
-      const newFiles = [...prev];
-      const tags = [...newFiles[selectedIndex].tags];
-      const draggedTag = tags[draggedIdx];
-      
-      tags.splice(draggedIdx, 1);
-      tags.splice(index, 0, draggedTag);
-      
-      newFiles[selectedIndex].tags = tags;
-      return newFiles;
-    });
-    setDraggedIdx(index);
-  };
-
-  const handleDragEnd = () => {
-    setDraggedIdx(null);
+    setActiveTags(prev => prev.filter(t => t !== tagToRemove));
   };
 
   return (
@@ -174,19 +138,19 @@ export const TagEditor: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
           <div className="grid grid-cols-3 gap-2">
             {files.map((file, idx) => (
-              <motion.div 
-                layout
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
+              <div 
                 key={file.name}
-                onClick={() => setSelectedIndex(idx)}
-                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-200 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
+                onClick={() => {
+                  setSelectedIndex(idx);
+                  setActiveTags(file.tags);
+                }}
+                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
               >
-                <img src={file.imageUrl} alt={file.name} className="w-full h-full object-cover" />
+                <img src={file.imageUrl} alt={file.name} className="w-full h-full object-cover" loading="lazy" />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
                   {file.tags.length}
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
           {files.length === 0 && (
@@ -223,28 +187,26 @@ export const TagEditor: React.FC = () => {
                     </div>
                     <button 
                         onClick={handleSave}
-                        disabled={isSaving}
+                        disabled={saveStatus === 'saving'}
                         className="flex items-center gap-2 bg-white hover:bg-zinc-200 text-black py-2 px-5 rounded-xl transition-all text-sm font-bold disabled:opacity-50 shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95"
                     >
                         <Save size={16} />
-                        {isSaving ? 'SAVING...' : 'SAVE TAGS'}
+                        {saveStatus === 'saving' ? 'SAVING...' : saveStatus === 'saved' ? 'SAVED!' : 'SAVE TAGS'}
                     </button>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto custom-scrollbar mb-4 bg-black/20 rounded-lg border border-white/5 p-4">
-                    <div className="flex flex-wrap gap-2">
-                        {files[selectedIndex].tags.map((tag, idx) => (
-                            <motion.div 
-                                layout
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.8 }}
+                    <Reorder.Group 
+                        axis="x" 
+                        values={activeTags} 
+                        onReorder={setActiveTags} 
+                        className="flex flex-wrap gap-2"
+                    >
+                        {activeTags.map((tag) => (
+                            <Reorder.Item 
                                 key={tag} 
-                                draggable
-                                onDragStart={(e: any) => handleDragStart(e, idx)}
-                                onDragOver={(e: any) => handleDragOver(e, idx)}
-                                onDragEnd={handleDragEnd}
-                                className={`flex items-center gap-1.5 bg-[#2a2d45] border border-[#3a3d55] text-[#d0d2e6] px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-[#323652] cursor-grab active:cursor-grabbing ${draggedIdx === idx ? 'opacity-50' : ''}`}
+                                value={tag}
+                                className="flex items-center gap-1.5 bg-[#2a2d45] border border-[#3a3d55] text-[#d0d2e6] px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-[#323652] cursor-grab active:cursor-grabbing relative"
                             >
                                 <span>{tag}</span>
                                 <button 
@@ -253,12 +215,12 @@ export const TagEditor: React.FC = () => {
                                 >
                                     <X size={14} />
                                 </button>
-                            </motion.div>
+                            </Reorder.Item>
                         ))}
-                        {files[selectedIndex].tags.length === 0 && (
+                        {activeTags.length === 0 && (
                             <span className="text-zinc-500 text-sm italic p-1">No tags found. Add some below!</span>
                         )}
-                    </div>
+                    </Reorder.Group>
                 </div>
 
                 <div className="mt-auto shrink-0">
