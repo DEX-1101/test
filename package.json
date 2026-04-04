@@ -18,7 +18,8 @@
     "motion": "^12.38.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "react-image-crop": "^11.0.10"
+    "react-image-crop": "^11.0.10",
+    "react-zoom-pan-pinch": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

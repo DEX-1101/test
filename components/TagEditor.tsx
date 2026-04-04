@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Crop as CropIcon } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2 } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -17,8 +17,7 @@ import {
   useSortable 
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import ReactCrop, { type Crop } from 'react-image-crop';
-import 'react-image-crop/dist/ReactCrop.css';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -111,13 +110,74 @@ export const TagEditor: React.FC = () => {
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
-  const [activeTags, setActiveTags] = useState<string[]>([]);
+  
+  const [tagState, setTagState] = useState<{
+    current: string[];
+    history: string[][];
+    index: number;
+  }>({
+    current: [],
+    history: [[]],
+    index: 0
+  });
+  const activeTags = tagState.current;
+
   const [newTag, setNewTag] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [previewUrl, setPreviewUrl] = useState<string>('');
-  const [crop, setCrop] = useState<Crop>();
-  const previewImgRef = useRef<HTMLImageElement>(null);
   const urlCache = useRef<Map<string, string>>(new Map());
+
+  const updateTags = (updater: string[] | ((prev: string[]) => string[])) => {
+    setTagState(prev => {
+      const resolvedTags = typeof updater === 'function' ? updater(prev.current) : updater;
+      if (JSON.stringify(resolvedTags) === JSON.stringify(prev.current)) {
+        return prev;
+      }
+      const newHistory = prev.history.slice(0, prev.index + 1);
+      newHistory.push(resolvedTags);
+      return {
+        current: resolvedTags,
+        history: newHistory,
+        index: newHistory.length - 1
+      };
+    });
+  };
+
+  const handleUndo = () => {
+    setTagState(prev => {
+      if (prev.index > 0) {
+        const newIndex = prev.index - 1;
+        return { ...prev, current: prev.history[newIndex], index: newIndex };
+      }
+      return prev;
+    });
+  };
+
+  const handleRedo = () => {
+    setTagState(prev => {
+      if (prev.index < prev.history.length - 1) {
+        const newIndex = prev.index + 1;
+        return { ...prev, current: prev.history[newIndex], index: newIndex };
+      }
+      return prev;
+    });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (document.activeElement?.tagName === 'INPUT') return;
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -225,37 +285,12 @@ export const TagEditor: React.FC = () => {
     setFiles(fileList);
     if (fileList.length > 0) {
       setSelectedIndex(0);
-      setActiveTags(fileList[0].tags);
+      setTagState({
+        current: fileList[0].tags,
+        history: [fileList[0].tags],
+        index: 0
+      });
     }
-  };
-
-  const getCroppedImg = async (image: HTMLImageElement, crop: Crop): Promise<Blob | null> => {
-    const canvas = document.createElement('canvas');
-    const scaleX = image.naturalWidth / image.width;
-    const scaleY = image.naturalHeight / image.height;
-    canvas.width = crop.width;
-    canvas.height = crop.height;
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) return null;
-
-    ctx.drawImage(
-      image,
-      crop.x * scaleX,
-      crop.y * scaleY,
-      crop.width * scaleX,
-      crop.height * scaleY,
-      0,
-      0,
-      crop.width,
-      crop.height
-    );
-
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => {
-        resolve(blob);
-      }, 'image/jpeg', 1);
-    });
   };
 
   const handleSave = async () => {
@@ -275,23 +310,6 @@ export const TagEditor: React.FC = () => {
       await writable.write(activeTags.join(', '));
       await writable.close();
 
-      // Save Crop if exists
-      if (crop && crop.width > 0 && crop.height > 0 && previewImgRef.current) {
-        const croppedBlob = await getCroppedImg(previewImgRef.current, crop);
-        if (croppedBlob) {
-          // @ts-ignore
-          const writableImg = await currentFile.imageHandle.createWritable();
-          await writableImg.write(croppedBlob);
-          await writableImg.close();
-          
-          // Update preview URL to reflect new crop
-          const newObjectUrl = URL.createObjectURL(croppedBlob);
-          urlCache.current.set(currentFile.name, newObjectUrl);
-          setPreviewUrl(newObjectUrl);
-          setCrop(undefined); // reset crop
-        }
-      }
-      
       // Update state to reflect that it now has a text handle and updated tags
       setFiles(prev => {
         const newFiles = [...prev];
@@ -311,7 +329,7 @@ export const TagEditor: React.FC = () => {
   const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && newTag.trim()) {
       const tagsToAdd = newTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
-      setActiveTags(prev => {
+      updateTags(prev => {
         const newTags = [...prev, ...tagsToAdd.filter(t => !prev.includes(t))];
         return newTags;
       });
@@ -320,7 +338,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    setActiveTags(prev => prev.filter(t => t !== tagToRemove));
+    updateTags(prev => prev.filter(t => t !== tagToRemove));
   };
 
   const sensors = useSensors(
@@ -337,7 +355,7 @@ export const TagEditor: React.FC = () => {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setActiveTags((items) => {
+      updateTags((items) => {
         const oldIndex = items.indexOf(active.id as string);
         const newIndex = items.indexOf(over.id as string);
         return arrayMove(items, oldIndex, newIndex);
@@ -346,9 +364,9 @@ export const TagEditor: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-row gap-4 overflow-hidden">
+    <div className="w-full h-full flex flex-row overflow-hidden bg-[#09090b]">
       {/* Sidebar (Left) */}
-      <div className="w-[300px] flex flex-col bg-black/20 rounded-2xl border border-white/5 shrink-0 overflow-hidden">
+      <div className="w-[300px] flex flex-col bg-black/40 border-r border-white/5 shrink-0 overflow-hidden z-10">
         <div className="p-4 border-b border-white/5">
           <button 
             onClick={handleOpenFolder}
@@ -365,8 +383,11 @@ export const TagEditor: React.FC = () => {
                 key={file.name}
                 onClick={() => {
                   setSelectedIndex(idx);
-                  setActiveTags(file.tags);
-                  setCrop(undefined);
+                  setTagState({
+                    current: file.tags,
+                    history: [file.tags],
+                    index: 0
+                  });
                 }}
                 className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
               >
@@ -386,95 +407,91 @@ export const TagEditor: React.FC = () => {
         </div>
       </div>
 
-      {/* Center - Image Preview & Crop */}
-      <div className="flex-1 flex flex-col bg-black/20 rounded-2xl border border-white/5 overflow-hidden relative items-center justify-center p-4">
+      {/* Main Content - Fullscreen Image & Overlay */}
+      <div className="flex-1 relative overflow-hidden bg-black/90">
         {selectedIndex !== -1 ? (
           <>
-            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10 text-xs font-medium text-zinc-300 z-10 flex items-center gap-2">
-              <CropIcon size={14} />
-              {files[selectedIndex].name}
-            </div>
-            <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden rounded-lg shadow-2xl">
-              <ReactCrop crop={crop} onChange={c => setCrop(c)} className="max-w-full max-h-full">
+            {/* Fullscreen Zoomable/Pannable Image */}
+            <TransformWrapper centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
+              <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center">
                 <img 
-                  ref={previewImgRef}
                   src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
                   alt={files[selectedIndex].name}
                   className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
                 />
-              </ReactCrop>
+              </TransformComponent>
+            </TransformWrapper>
+
+            {/* Floating Tag Editor Overlay */}
+            <div className="absolute bottom-6 right-6 w-[380px] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+               {/* Header with Undo/Redo */}
+               <div className="flex items-center justify-between p-3 border-b border-white/10 bg-white/5">
+                 <div className="flex gap-1">
+                   <button 
+                     onClick={handleUndo} 
+                     disabled={tagState.index <= 0} 
+                     className="p-1.5 text-white disabled:opacity-30 hover:bg-white/10 rounded-lg transition-colors" 
+                     title="Undo (Ctrl+Z)"
+                   >
+                     <Undo2 size={16}/>
+                   </button>
+                   <button 
+                     onClick={handleRedo} 
+                     disabled={tagState.index >= tagState.history.length - 1} 
+                     className="p-1.5 text-white disabled:opacity-30 hover:bg-white/10 rounded-lg transition-colors" 
+                     title="Redo (Ctrl+Shift+Z)"
+                   >
+                     <Redo2 size={16}/>
+                   </button>
+                 </div>
+                 <span className="text-xs text-white/50 truncate max-w-[200px]">{files[selectedIndex].name}</span>
+                 <span className="bg-white/10 text-[10px] px-2 py-0.5 rounded-full text-zinc-300">{activeTags.length} tags</span>
+               </div>
+
+               {/* Tags Area */}
+               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar flex flex-col">
+                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                   <SortableContext items={activeTags} strategy={rectSortingStrategy}>
+                     <div className="flex flex-wrap gap-2 content-start">
+                       {activeTags.map((tag) => (
+                         <SortableTag key={tag} tag={tag} onRemove={handleRemoveTag} />
+                       ))}
+                       {activeTags.length === 0 && (
+                         <div className="w-full text-center text-zinc-500 text-sm italic p-4 bg-white/5 rounded-xl border border-white/5">
+                           No tags yet. Type below to add!
+                         </div>
+                       )}
+                     </div>
+                   </SortableContext>
+                 </DndContext>
+               </div>
+
+               {/* Input & Save Area */}
+               <div className="p-3 bg-black/40 border-t border-white/10 flex items-center gap-2">
+                 <input 
+                   type="text"
+                   value={newTag}
+                   onChange={(e) => setNewTag(e.target.value)}
+                   onKeyDown={handleAddTag}
+                   placeholder="Add tags..."
+                   className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                 />
+                 <button 
+                   onClick={handleSave}
+                   disabled={saveStatus === 'saving'}
+                   className={`shrink-0 flex items-center justify-center px-5 py-2.5 rounded-full font-bold text-sm transition-all shadow-lg ${saveStatus === 'saved' ? 'bg-green-500 text-white' : 'bg-white text-black hover:bg-zinc-200 hover:scale-105 active:scale-95'} disabled:opacity-50 disabled:hover:scale-100`}
+                 >
+                   {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
+                 </button>
+               </div>
             </div>
-            {crop && crop.width > 0 && (
-              <div className="absolute bottom-4 bg-blue-500/80 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-full shadow-lg animate-in fade-in slide-in-from-bottom-2">
-                Crop selected. Click Save to apply.
-              </div>
-            )}
           </>
         ) : (
-          <div className="text-zinc-600 flex flex-col items-center gap-2">
-            <ImageIcon size={48} strokeWidth={1} />
-            <p>No image selected</p>
+          <div className="flex-1 flex items-center justify-center text-zinc-500 gap-4">
+            <ImageIcon size={64} strokeWidth={1} className="opacity-50" />
+            <p>Select an image from the sidebar</p>
           </div>
         )}
-      </div>
-
-      {/* Right - Chat Style Tag Editor */}
-      <div className="w-[350px] flex flex-col bg-black/20 rounded-2xl border border-white/5 shrink-0 overflow-hidden relative">
-        <div className="p-4 border-b border-white/5 flex items-center gap-2 bg-white/5">
-          <Tag size={16} className="text-blue-400" />
-          <h3 className="text-sm font-semibold text-white">Tags</h3>
-          <span className="ml-auto bg-white/10 text-xs px-2 py-0.5 rounded-full text-zinc-300">{activeTags.length}</span>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar flex flex-col">
-          <DndContext 
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-          >
-              <SortableContext 
-                  items={activeTags}
-                  strategy={rectSortingStrategy}
-              >
-                  <div className="flex flex-wrap gap-2 content-start">
-                      {activeTags.map((tag) => (
-                          <SortableTag key={tag} tag={tag} onRemove={handleRemoveTag} />
-                      ))}
-                      {activeTags.length === 0 && (
-                          <div className="w-full text-center text-zinc-500 text-sm italic p-4 bg-white/5 rounded-xl border border-white/5">
-                            No tags yet. Type below to add!
-                          </div>
-                      )}
-                  </div>
-              </SortableContext>
-          </DndContext>
-        </div>
-
-        {/* Chat Input Area */}
-        <div className="p-3 bg-black/40 border-t border-white/5 flex items-center gap-2">
-          <input 
-              type="text"
-              value={newTag}
-              onChange={(e) => setNewTag(e.target.value)}
-              onKeyDown={handleAddTag}
-              placeholder="Add tags (comma separated)..."
-              className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
-          />
-          <button 
-              onClick={handleSave}
-              disabled={saveStatus === 'saving'}
-              className={`shrink-0 flex items-center justify-center w-10 h-10 rounded-full transition-all shadow-lg ${saveStatus === 'saved' ? 'bg-green-500 text-white' : 'bg-white text-black hover:bg-zinc-200 hover:scale-105 active:scale-95'} disabled:opacity-50 disabled:hover:scale-100`}
-              title="Save Tags & Crop"
-          >
-              {saveStatus === 'saving' ? (
-                <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              ) : saveStatus === 'saved' ? (
-                <Save size={16} />
-              ) : (
-                <Send size={16} className="ml-0.5" />
-              )}
-          </button>
-        </div>
       </div>
     </div>
   );
