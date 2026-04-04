@@ -487,18 +487,18 @@ export const TagEditor: React.FC = () => {
             </TransformWrapper>
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[700px] max-h-[85%] flex flex-col bg-black/50 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden">
                
-               {/* Tags Area (Landscape) */}
-               <div className="p-5 min-h-[100px] max-h-[200px] overflow-y-auto custom-scrollbar">
+               {/* Tags Area (Top) */}
+               <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                    <SortableContext items={activeTags} strategy={rectSortingStrategy}>
-                     <div className="flex flex-wrap justify-center gap-2 content-start">
+                     <div className="flex flex-wrap gap-2 content-start">
                        {activeTags.map((tag) => (
                          <SortableTag key={tag} tag={tag} onRemove={handleRemoveTag} />
                        ))}
                        {activeTags.length === 0 && (
-                         <div className="w-full text-center text-zinc-400 text-sm italic p-2">
+                         <div className="w-full text-left text-zinc-400 text-sm italic p-2">
                            No tags yet. Type below to add!
                          </div>
                        )}
@@ -507,54 +507,59 @@ export const TagEditor: React.FC = () => {
                  </DndContext>
                </div>
 
-               {/* Vertical Buttons Between Tags and Input */}
-               <div className="flex flex-col items-center gap-2 py-4 bg-white/5 border-y border-white/10">
-                  <button 
-                    onClick={handleUndo} 
-                    disabled={tagState.index <= 0} 
-                    className="w-48 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-30 transition-colors"
-                  >
-                    <Undo2 size={16}/> Undo
-                  </button>
-                  <button 
-                    onClick={handleRedo} 
-                    disabled={tagState.index >= tagState.history.length - 1} 
-                    className="w-48 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-30 transition-colors"
-                  >
-                    <Redo2 size={16}/> Redo
-                  </button>
-                  <button 
-                    onClick={() => setIsCropping(!isCropping)} 
-                    className={`w-48 py-2 rounded-full text-sm font-medium flex items-center justify-center gap-2 transition-colors ${isCropping ? 'bg-blue-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white'}`}
-                  >
-                    <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Draw Crop Area'}
-                  </button>
-                  <button 
-                    onClick={handleSave}
-                    disabled={saveStatus === 'saving'}
-                    className="w-48 py-2 rounded-full bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
-                  >
-                    {saveStatus === 'saving' ? (
-                      <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                    ) : saveStatus === 'saved' ? (
-                      <Save size={16} />
-                    ) : (
-                      <Save size={16} />
-                    )}
-                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
-                  </button>
-               </div>
+               {/* Bottom Control Bar */}
+               <div className="flex items-center justify-between p-3 bg-black/40 border-t border-white/10 gap-4">
+                  {/* Left: Other Buttons */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button 
+                      onClick={handleUndo} 
+                      disabled={tagState.index <= 0} 
+                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-30 transition-colors"
+                      title="Undo (Ctrl+Z)"
+                    >
+                      <Undo2 size={18}/>
+                    </button>
+                    <button 
+                      onClick={handleRedo} 
+                      disabled={tagState.index >= tagState.history.length - 1} 
+                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-30 transition-colors"
+                      title="Redo (Ctrl+Shift+Z)"
+                    >
+                      <Redo2 size={18}/>
+                    </button>
+                    <button 
+                      onClick={() => setIsCropping(!isCropping)} 
+                      className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isCropping ? 'bg-blue-500 text-white' : 'bg-white/5 hover:bg-white/10 text-white'}`}
+                    >
+                      <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Crop'}
+                    </button>
+                  </div>
 
-               {/* Input Area */}
-               <div className="p-4 bg-black/40">
-                 <input 
-                   type="text"
-                   value={newTag}
-                   onChange={(e) => setNewTag(e.target.value)}
-                   onKeyDown={handleAddTag}
-                   placeholder="Add tags (comma separated) and press Enter..."
-                   className="w-full bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm text-center text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
-                 />
+                  {/* Right: Input & Save */}
+                  <div className="flex items-center gap-2 flex-1">
+                    <input 
+                      type="text"
+                      value={newTag}
+                      onChange={(e) => setNewTag(e.target.value)}
+                      onKeyDown={handleAddTag}
+                      placeholder="Add tags (comma separated)..."
+                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                    />
+                    <button 
+                      onClick={handleSave}
+                      disabled={saveStatus === 'saving'}
+                      className="shrink-0 px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                    >
+                      {saveStatus === 'saving' ? (
+                        <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                      ) : saveStatus === 'saved' ? (
+                        <Save size={16} />
+                      ) : (
+                        <Save size={16} />
+                      )}
+                      {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
+                    </button>
+                  </div>
                </div>
             </div>
           </>
