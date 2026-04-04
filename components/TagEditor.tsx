@@ -1125,7 +1125,7 @@ export const TagEditor: React.FC = () => {
 
               <div className="relative w-full flex justify-center">
                 {/* Floating Tag Editor Overlay (Centered Landscape) */}
-                <div className={`w-full max-h-[85vh] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 scale-95 absolute bottom-0 pointer-events-none' : 'opacity-100 scale-100 relative'}`}>
+                <div className={`w-full max-h-[85vh] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 scale-95 absolute bottom-0 pointer-events-none' : 'opacity-100 scale-100 relative pointer-events-auto'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -1239,7 +1239,7 @@ export const TagEditor: React.FC = () => {
             </div>
 
             {/* Floating Crop Controls */}
-            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 pointer-events-auto transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
               <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10 mr-2">
                 <button 
                   onClick={handleUndoCrop} 
@@ -1282,7 +1282,7 @@ export const TagEditor: React.FC = () => {
             </div>
 
             {/* Floating Auto Tag & Batch Processing Overlay */}
-            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
         <button 
           onClick={() => setIsAutoTagModalOpen(false)}
           className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
@@ -1461,7 +1461,7 @@ export const TagEditor: React.FC = () => {
       </div>
 
             {/* Floating ZIP Overlay */}
-            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
         <button 
           onClick={() => setIsZipModalOpen(false)}
           className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
@@ -1578,7 +1578,7 @@ export const TagEditor: React.FC = () => {
       </div>
 
             {/* Floating Inpaint Controls */}
-            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 pointer-events-auto transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100 relative pointer-events-auto' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
         <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10">
           <button 
             onClick={() => setInpaintMode('draw')}
