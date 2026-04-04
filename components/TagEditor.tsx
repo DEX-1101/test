@@ -41,8 +41,10 @@ const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFil
         if (cached) {
           setUrl(cached);
         } else {
-          imageHandle.getFile().then(file => {
-            const newUrl = URL.createObjectURL(file);
+          imageHandle.getFile().then(async file => {
+            const buffer = await file.arrayBuffer();
+            const blob = new Blob([buffer], { type: file.type });
+            const newUrl = URL.createObjectURL(blob);
             urlCache.current.set(name, newUrl);
             setUrl(newUrl);
           });
@@ -218,8 +220,10 @@ export const TagEditor: React.FC = () => {
           setImageState({ history: [cached], index: 0 });
         }
       } else {
-        currentImageHandle.getFile().then(file => {
-          const objectUrl = URL.createObjectURL(file);
+        currentImageHandle.getFile().then(async file => {
+          const buffer = await file.arrayBuffer();
+          const blob = new Blob([buffer], { type: file.type });
+          const objectUrl = URL.createObjectURL(blob);
           urlCache.current.set(name, objectUrl);
           // Only update state if we haven't switched to another image while loading
           if (lastLoadedIndex.current === selectedIndex) {
@@ -248,7 +252,9 @@ export const TagEditor: React.FC = () => {
         if (!urlCache.current.has(name)) {
           try {
             const file = await handle.getFile();
-            urlCache.current.set(name, URL.createObjectURL(file));
+            const buffer = await file.arrayBuffer();
+            const blob = new Blob([buffer], { type: file.type });
+            urlCache.current.set(name, URL.createObjectURL(blob));
           } catch (e) {
             // ignore
           }
