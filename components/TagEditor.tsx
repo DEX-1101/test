@@ -149,6 +149,7 @@ export const TagEditor: React.FC = () => {
   const [batchRemoveTags, setBatchRemoveTags] = useState('');
   const [batchRename, setBatchRename] = useState(false);
   const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
+  const [batchProgress, setBatchProgress] = useState(0);
 
   const cleanAndSplitTags = (tagsStr: string) => {
     return tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0);
@@ -157,6 +158,7 @@ export const TagEditor: React.FC = () => {
   const handleBatchProcess = async () => {
     if (!directoryHandle) return;
     setBatchStatus('processing');
+    setBatchProgress(0);
 
     try {
       const actTags = cleanAndSplitTags(batchActivationTags);
@@ -175,6 +177,9 @@ export const TagEditor: React.FC = () => {
 
       const tagsToDrop = [...remTags, ...previousActTags];
       const updatedFiles = [...files];
+      
+      const totalSteps = updatedFiles.length * (batchRename ? 2 : 1);
+      let currentStep = 0;
 
       for (let i = 0; i < updatedFiles.length; i++) {
         const file = updatedFiles[i];
@@ -200,6 +205,9 @@ export const TagEditor: React.FC = () => {
         const writable = await txtHandle.createWritable();
         await writable.write(uniqueTags.join(', '));
         await writable.close();
+        
+        currentStep++;
+        setBatchProgress(Math.round((currentStep / totalSteps) * 100));
       }
 
       try {
@@ -244,6 +252,9 @@ export const TagEditor: React.FC = () => {
             updatedFiles[i].textHandle = newTxtHandle;
           }
           counter++;
+          
+          currentStep++;
+          setBatchProgress(Math.round((currentStep / totalSteps) * 100));
         }
       }
 
@@ -256,15 +267,18 @@ export const TagEditor: React.FC = () => {
         });
       }
       setBatchStatus('done');
+      setBatchProgress(100);
       setTimeout(() => {
         setIsBatchModalOpen(false);
         setBatchStatus('idle');
+        setBatchProgress(0);
       }, 1500);
 
     } catch (err) {
       console.error(err);
       alert('Failed to process batch.');
       setBatchStatus('idle');
+      setBatchProgress(0);
     }
   };
 
@@ -639,15 +653,6 @@ export const TagEditor: React.FC = () => {
             <FolderOpen size={16} />
             Open Folder
           </button>
-          {files.length > 0 && (
-            <button 
-              onClick={() => setIsBatchModalOpen(true)}
-              className="w-full flex items-center justify-center gap-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 py-2 px-4 rounded-xl transition-colors font-medium text-xs border border-blue-500/20"
-            >
-              <Settings size={14} />
-              Batch Process
-            </button>
-          )}
         </div>
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
           <div className="grid grid-cols-3 gap-2">
@@ -710,7 +715,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isBatchModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -753,24 +758,12 @@ export const TagEditor: React.FC = () => {
                       </button>
                     </div>
 
-                    <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10">
-                      <button 
-                        onClick={handleUndoCrop} 
-                        disabled={imageState.index <= 0} 
-                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
-                        title="Undo Crop"
-                      >
-                        <Undo2 size={16}/> <span className="text-xs font-medium">Crop</span>
-                      </button>
-                      <button 
-                        onClick={handleRedoCrop} 
-                        disabled={imageState.index >= imageState.history.length - 1} 
-                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
-                        title="Redo Crop"
-                      >
-                        <Redo2 size={16}/> <span className="text-xs font-medium">Crop</span>
-                      </button>
-                    </div>
+                    <button 
+                      onClick={() => setIsBatchModalOpen(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                    >
+                      <Settings size={16}/> Batch
+                    </button>
 
                     <button 
                       onClick={() => setIsCropping(true)} 
@@ -820,6 +813,24 @@ export const TagEditor: React.FC = () => {
 
             {/* Floating Crop Controls */}
             <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+              <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10 mr-2">
+                <button 
+                  onClick={handleUndoCrop} 
+                  disabled={imageState.index <= 0} 
+                  className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
+                  title="Undo Crop"
+                >
+                  <Undo2 size={16}/>
+                </button>
+                <button 
+                  onClick={handleRedoCrop} 
+                  disabled={imageState.index >= imageState.history.length - 1} 
+                  className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
+                  title="Redo Crop"
+                >
+                  <Redo2 size={16}/>
+                </button>
+              </div>
               <button 
                 onClick={() => {
                   setIsCropping(false);
@@ -851,99 +862,106 @@ export const TagEditor: React.FC = () => {
         )}
       </div>
 
-      {/* Batch Processing Modal */}
-      {isBatchModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-[#18181b] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-white/10">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Settings size={18} className="text-blue-400" />
-                Batch Process Dataset
-              </h2>
-              <button 
-                onClick={() => setIsBatchModalOpen(false)}
-                className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-5 flex flex-col gap-4 overflow-y-auto max-h-[70vh] custom-scrollbar">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
-                <input 
-                  type="text"
-                  value={batchActivationTags}
-                  onChange={e => setBatchActivationTags(e.target.value)}
-                  placeholder="e.g., sakura, 1girl"
-                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
-                />
-                <p className="text-xs text-zinc-500">Added at the very front. Replaces previous activation tags.</p>
-              </div>
+      {/* Floating Batch Processing Overlay */}
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isBatchModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Settings size={18} className="text-blue-400" />
+            Batch Process Dataset
+          </h2>
+          <button 
+            onClick={() => setIsBatchModalOpen(false)}
+            className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        
+        <div className="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
+            <input 
+              type="text"
+              value={batchActivationTags}
+              onChange={e => setBatchActivationTags(e.target.value)}
+              placeholder="e.g., sakura, 1girl"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+            />
+            <p className="text-xs text-zinc-500">Added at the very front. Replaces previous activation tags.</p>
+          </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
-                <input 
-                  type="text"
-                  value={batchEmphasizeTags}
-                  onChange={e => setBatchEmphasizeTags(e.target.value)}
-                  placeholder="e.g., solo, long hair"
-                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
-                />
-                <p className="text-xs text-zinc-500">Moved right after activation tags (only if they already exist in the file).</p>
-              </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
+            <input 
+              type="text"
+              value={batchEmphasizeTags}
+              onChange={e => setBatchEmphasizeTags(e.target.value)}
+              placeholder="e.g., solo, long hair"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+            />
+            <p className="text-xs text-zinc-500">Moved right after activation tags (only if they already exist in the file).</p>
+          </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
-                <input 
-                  type="text"
-                  value={batchRemoveTags}
-                  onChange={e => setBatchRemoveTags(e.target.value)}
-                  placeholder="e.g., blurry, bad anatomy"
-                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
-                />
-                <p className="text-xs text-zinc-500">Completely deleted from all files.</p>
-              </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
+            <input 
+              type="text"
+              value={batchRemoveTags}
+              onChange={e => setBatchRemoveTags(e.target.value)}
+              placeholder="e.g., blurry, bad anatomy"
+              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50"
+            />
+            <p className="text-xs text-zinc-500">Completely deleted from all files.</p>
+          </div>
 
-              <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
-                <input 
-                  type="checkbox"
-                  id="renameSeq"
-                  checked={batchRename}
-                  onChange={e => setBatchRename(e.target.checked)}
-                  className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
-                />
-                <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
-                  Rename files sequentially (1.jpg, 1.txt, ...)
-                </label>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
-              <button 
-                onClick={() => setIsBatchModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleBatchProcess}
-                disabled={batchStatus !== 'idle'}
-                className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
-              >
-                {batchStatus === 'processing' ? (
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                ) : batchStatus === 'done' ? (
-                  <Save size={16} />
-                ) : (
-                  <Settings size={16} />
-                )}
-                {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Apply to All'}
-              </button>
-            </div>
+          <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
+            <input 
+              type="checkbox"
+              id="renameSeq"
+              checked={batchRename}
+              onChange={e => setBatchRename(e.target.checked)}
+              className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
+            />
+            <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
+              Rename files sequentially (1.jpg, 1.txt, ...)
+            </label>
           </div>
         </div>
-      )}
+
+        {batchStatus !== 'idle' && (
+          <div className="px-5 pb-2">
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-300 ease-out"
+                style={{ width: `${batchProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/40">
+          <button 
+            onClick={() => setIsBatchModalOpen(false)}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleBatchProcess}
+            disabled={batchStatus !== 'idle'}
+            className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+          >
+            {batchStatus === 'processing' ? (
+              <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            ) : batchStatus === 'done' ? (
+              <Save size={16} />
+            ) : (
+              <Settings size={16} />
+            )}
+            {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Apply to All'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
