@@ -143,8 +143,8 @@ export const TagEditor: React.FC = () => {
   const previewImgRef = useRef<HTMLImageElement>(null);
   const urlCache = useRef<Map<string, string>>(new Map());
 
-  // Batch Processing State
-  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  // Auto Tag & Batch Processing State
+  const [isAutoTagModalOpen, setIsAutoTagModalOpen] = useState(false);
   const [batchActivationTags, setBatchActivationTags] = useState('');
   const [batchEmphasizeTags, setBatchEmphasizeTags] = useState('');
   const [batchRemoveTags, setBatchRemoveTags] = useState('');
@@ -153,7 +153,7 @@ export const TagEditor: React.FC = () => {
   const [batchProgress, setBatchProgress] = useState(0);
 
   // WD Tagger State
-  const [isWdModalOpen, setIsWdModalOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState('eva02-v3');
   const [wdStatus, setWdStatus] = useState<'idle' | 'loading' | 'processing' | 'done'>('idle');
   const [wdProgress, setWdProgress] = useState(0);
   const [wdProgressText, setWdProgressText] = useState('');
@@ -163,8 +163,8 @@ export const TagEditor: React.FC = () => {
   const [wdModelExists, setWdModelExists] = useState(false);
 
   useEffect(() => {
-    checkModelExists().then(exists => setWdModelExists(exists));
-  }, [isWdModalOpen]);
+    checkModelExists(selectedModelId).then(exists => setWdModelExists(exists));
+  }, [isAutoTagModalOpen, selectedModelId]);
 
   const handleWdProcess = async () => {
     if (!directoryHandle) return;
@@ -173,7 +173,7 @@ export const TagEditor: React.FC = () => {
     setWdProgressText('Initializing WD Tagger...');
 
     try {
-      await wdTagger.init((progress, status) => {
+      await wdTagger.init(selectedModelId, (progress, status) => {
         setWdProgress(progress);
         setWdProgressText(status);
       });
@@ -249,8 +249,8 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleDeleteModel = async () => {
-    if (confirm('Are you sure you want to delete the downloaded model? It will need to be downloaded again (1.2GB).')) {
-      await deleteModelFromDB();
+    if (confirm('Are you sure you want to delete the downloaded model? It will need to be downloaded again.')) {
+      await deleteModelFromDB(selectedModelId);
       setWdModelExists(false);
     }
   };
@@ -817,7 +817,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isBatchModalOpen || isWdModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -861,18 +861,11 @@ export const TagEditor: React.FC = () => {
                     </div>
 
                     <button 
-                      onClick={() => setIsBatchModalOpen(true)} 
+                      onClick={() => setIsAutoTagModalOpen(true)} 
                       className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                      title="Auto-tag & Batch Process"
                     >
-                      <Settings size={16}/> Batch
-                    </button>
-
-                    <button 
-                      onClick={() => setIsWdModalOpen(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
-                      title="Auto-tag with WD Tagger (EVA02 Large)"
-                    >
-                      <Wand2 size={16}/> Auto-Tag
+                      <Wand2 size={16}/> Auto Tag
                     </button>
 
                     <button 
@@ -972,199 +965,176 @@ export const TagEditor: React.FC = () => {
         )}
       </div>
 
-      {/* Floating Batch Processing Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isBatchModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
-        <div className="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
-            <input 
-              type="text"
-              value={batchActivationTags}
-              onChange={e => setBatchActivationTags(e.target.value)}
-              placeholder="e.g., sakura, 1girl"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-            />
-            <p className="text-xs text-zinc-500">Added at the very front. Replaces previous activation tags.</p>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
-            <input 
-              type="text"
-              value={batchEmphasizeTags}
-              onChange={e => setBatchEmphasizeTags(e.target.value)}
-              placeholder="e.g., solo, long hair"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-            />
-            <p className="text-xs text-zinc-500">Moved right after activation tags (only if they already exist in the file).</p>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
-            <input 
-              type="text"
-              value={batchRemoveTags}
-              onChange={e => setBatchRemoveTags(e.target.value)}
-              placeholder="e.g., blurry, bad anatomy"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-            />
-            <p className="text-xs text-zinc-500">Completely deleted from all files.</p>
-          </div>
-
-          <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
-            <input 
-              type="checkbox"
-              id="renameSeq"
-              checked={batchRename}
-              onChange={e => setBatchRename(e.target.checked)}
-              className="w-4 h-4 rounded border-white/20 bg-black/50 text-white focus:ring-white/50 focus:ring-offset-0"
-            />
-            <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
-              Rename files sequentially (1.jpg, 1.txt, ...)
-            </label>
-          </div>
-        </div>
-
-        {batchStatus !== 'idle' && (
-          <div className="px-5 pb-2">
-            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-white transition-all duration-300 ease-out"
-                style={{ width: `${batchProgress}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
+      {/* Floating Auto Tag & Batch Processing Overlay */}
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Wand2 size={18} className="text-purple-400" />
+            Auto Tag & Batch Process
+          </h2>
           <button 
-            onClick={() => setIsBatchModalOpen(false)}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
+            onClick={() => setIsAutoTagModalOpen(false)}
+            className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
           >
-            Cancel
-          </button>
-          <button 
-            onClick={handleBatchProcess}
-            disabled={batchStatus !== 'idle'}
-            className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
-          >
-            {batchStatus === 'processing' ? (
-              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-            ) : batchStatus === 'done' ? (
-              <Save size={16} />
-            ) : (
-              <Settings size={16} />
-            )}
-            {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Apply to All'}
+            <X size={18} />
           </button>
         </div>
-      </div>
-
-      {/* Floating WD Tagger Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isWdModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
-        <div className="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <Wand2 size={18} className="text-purple-400" />
-              WD Tagger (EVA02 Large)
-            </h2>
-            {wdModelExists && (
-              <button 
-                onClick={handleDeleteModel}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-colors flex items-center gap-1.5"
-                title="Delete downloaded model from cache"
+        
+        <div className="p-5 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1">
+          {/* Left Column: Tag Generation */}
+          <div className="flex flex-col gap-4">
+            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
+              <Wand2 size={16} className="text-zinc-400" /> 1. Generate Tags
+            </h3>
+            
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <label className="text-sm text-zinc-300">Model</label>
+                {wdModelExists && (
+                  <button onClick={handleDeleteModel} className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1">
+                    <Trash2 size={12} /> Delete Cached Model
+                  </button>
+                )}
+              </div>
+              <select 
+                value={selectedModelId} 
+                onChange={e => setSelectedModelId(e.target.value)} 
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
               >
-                <Trash2 size={14} /> Delete Model
-              </button>
-            )}
-          </div>
-          
-          <p className="text-sm text-zinc-400">
-            Automatically generate tags for all images using the SmilingWolf/wd-eva02-large-tagger-v3 model.
-            The model is ~1.2GB and will be downloaded on first run and cached in your browser.
-          </p>
+                <option value="eva02-v3">EVA02 Large v3 (~1.2GB)</option>
+                <option value="vit-v3">ViT Large v3 (~1.2GB)</option>
+                <option value="swinv2-v2">SwinV2 v2 (~1.1GB)</option>
+              </select>
+            </div>
 
-          <div className="grid grid-cols-2 gap-4 mt-2">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-zinc-300 flex justify-between">
-                <span>General Threshold</span>
-                <span className="text-zinc-500">{wdThreshold.toFixed(2)}</span>
-              </label>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                  <span>General Thresh</span>
+                  <span className="text-zinc-500">{wdThreshold.toFixed(2)}</span>
+                </label>
+                <input 
+                  type="range" min="0" max="1" step="0.01"
+                  value={wdThreshold} onChange={e => setWdThreshold(parseFloat(e.target.value))}
+                  className="w-full accent-purple-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                  <span>Char Thresh</span>
+                  <span className="text-zinc-500">{wdCharThreshold.toFixed(2)}</span>
+                </label>
+                <input 
+                  type="range" min="0" max="1" step="0.01"
+                  value={wdCharThreshold} onChange={e => setWdCharThreshold(parseFloat(e.target.value))}
+                  className="w-full accent-purple-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
               <input 
-                type="range"
-                min="0" max="1" step="0.01"
-                value={wdThreshold}
-                onChange={e => setWdThreshold(parseFloat(e.target.value))}
-                className="w-full accent-purple-500"
+                type="checkbox" id="wdOverwrite"
+                checked={wdOverwrite} onChange={e => setWdOverwrite(e.target.checked)}
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-purple-500 focus:ring-purple-500/50 focus:ring-offset-0"
+              />
+              <label htmlFor="wdOverwrite" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
+                Overwrite existing tags
+              </label>
+            </div>
+
+            <button 
+              onClick={handleWdProcess}
+              disabled={wdStatus !== 'idle' || batchStatus !== 'idle'}
+              className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+            >
+              {wdStatus === 'loading' || wdStatus === 'processing' ? (
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              ) : wdStatus === 'done' ? (
+                <Save size={16} />
+              ) : (
+                <Wand2 size={16} />
+              )}
+              {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? 'Tagging...' : wdStatus === 'done' ? 'Done!' : 'Generate Tags'}
+            </button>
+          </div>
+
+          {/* Right Column: Batch Processing */}
+          <div className="flex flex-col gap-4">
+            <h3 className="font-medium text-white border-b border-white/10 pb-2 flex items-center gap-2">
+              <Settings size={16} className="text-zinc-400" /> 2. Batch Process
+            </h3>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Activation Tags</label>
+              <input 
+                type="text" value={batchActivationTags} onChange={e => setBatchActivationTags(e.target.value)}
+                placeholder="e.g., sakura, 1girl"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-zinc-300 flex justify-between">
-                <span>Character Threshold</span>
-                <span className="text-zinc-500">{wdCharThreshold.toFixed(2)}</span>
-              </label>
+              <label className="text-sm font-medium text-zinc-300">Tags to Emphasize</label>
               <input 
-                type="range"
-                min="0" max="1" step="0.01"
-                value={wdCharThreshold}
-                onChange={e => setWdCharThreshold(parseFloat(e.target.value))}
-                className="w-full accent-purple-500"
+                type="text" value={batchEmphasizeTags} onChange={e => setBatchEmphasizeTags(e.target.value)}
+                placeholder="e.g., solo, long hair"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
               />
             </div>
-          </div>
 
-          <div className="flex items-center gap-3 mt-2 p-3 bg-white/5 rounded-lg border border-white/5">
-            <input 
-              type="checkbox"
-              id="wdOverwrite"
-              checked={wdOverwrite}
-              onChange={e => setWdOverwrite(e.target.checked)}
-              className="w-4 h-4 rounded border-white/20 bg-black/50 text-purple-500 focus:ring-purple-500/50 focus:ring-offset-0"
-            />
-            <label htmlFor="wdOverwrite" className="text-sm font-medium text-zinc-300 cursor-pointer select-none">
-              Overwrite existing tags (if unchecked, skips images that already have tags)
-            </label>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
+              <input 
+                type="text" value={batchRemoveTags} onChange={e => setBatchRemoveTags(e.target.value)}
+                placeholder="e.g., blurry, bad anatomy"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
+              <input 
+                type="checkbox" id="renameSeq"
+                checked={batchRename} onChange={e => setBatchRename(e.target.checked)}
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
+              />
+              <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
+                Rename files sequentially (1.jpg, 1.txt)
+              </label>
+            </div>
+
+            <button 
+              onClick={handleBatchProcess}
+              disabled={batchStatus !== 'idle' || wdStatus !== 'idle'}
+              className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+            >
+              {batchStatus === 'processing' ? (
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              ) : batchStatus === 'done' ? (
+                <Save size={16} />
+              ) : (
+                <Settings size={16} />
+              )}
+              {batchStatus === 'processing' ? 'Processing...' : batchStatus === 'done' ? 'Done!' : 'Process Batch'}
+            </button>
           </div>
         </div>
 
-        {wdStatus !== 'idle' && (
-          <div className="px-5 pb-2 flex flex-col gap-1">
-            <div className="flex justify-between text-xs text-zinc-400 font-medium">
-              <span>{wdProgressText}</span>
-              <span>{wdProgress}%</span>
+        {/* Shared Progress Bar Area */}
+        {(wdStatus !== 'idle' || batchStatus !== 'idle') && (
+          <div className="px-5 pb-4 bg-black/20 pt-3 border-t border-white/10">
+            <div className="flex justify-between text-xs text-zinc-400 font-medium mb-1.5">
+              <span>{wdStatus !== 'idle' ? wdProgressText : 'Processing batch...'}</span>
+              <span>{wdStatus !== 'idle' ? wdProgress : batchProgress}%</span>
             </div>
             <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
               <div 
-                className="h-full bg-purple-500 transition-all duration-300 ease-out"
-                style={{ width: `${wdProgress}%` }}
+                className={`h-full transition-all duration-300 ease-out ${wdStatus !== 'idle' ? 'bg-purple-500' : 'bg-blue-500'}`}
+                style={{ width: `${wdStatus !== 'idle' ? wdProgress : batchProgress}%` }}
               />
             </div>
           </div>
         )}
-
-        <div className="p-4 border-t border-white/10 flex justify-end gap-3 bg-black/20">
-          <button 
-            onClick={() => setIsWdModalOpen(false)}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
-          >
-            Cancel
-          </button>
-          <button 
-            onClick={handleWdProcess}
-            disabled={wdStatus !== 'idle'}
-            className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
-          >
-            {wdStatus === 'loading' || wdStatus === 'processing' ? (
-              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-            ) : wdStatus === 'done' ? (
-              <Save size={16} />
-            ) : (
-              <Wand2 size={16} />
-            )}
-            {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? 'Tagging...' : wdStatus === 'done' ? 'Done!' : 'Start Auto-Tagging'}
-          </button>
-        </div>
       </div>
     </div>
   );
