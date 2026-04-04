@@ -291,7 +291,7 @@ const App: React.FC = () => {
          </div>
       </div>
 
-      <div className={`w-full flex flex-col gap-6 transition-all duration-500 ${mode === 'MOSAIC' || mode === 'TAGS' ? 'flex-1 h-full max-w-[95%] pb-4' : 'max-w-6xl'}`}>
+      <div className={`w-full flex flex-col gap-6 transition-all duration-500 ${mode === 'MOSAIC' || mode === 'TAGS' ? 'flex-1 h-full max-w-[95%] pb-10' : 'max-w-6xl'}`}>
         
         {mode === 'MIX' ? (
             /* MIX MODE */

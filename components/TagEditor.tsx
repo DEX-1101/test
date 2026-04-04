@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FolderOpen, Save, X, Image as ImageIcon, Tag } from 'lucide-react';
 import { 
   DndContext, 
@@ -23,9 +23,47 @@ interface FileEntry {
   textHandle?: FileSystemFileHandle;
   name: string;
   baseName: string;
-  imageUrl: string;
   tags: string[];
 }
+
+const Thumbnail = ({ imageHandle, name }: { imageHandle: FileSystemFileHandle, name: string }) => {
+  const [url, setUrl] = useState<string>('');
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && !url) {
+        imageHandle.getFile().then(file => {
+          setUrl(URL.createObjectURL(file));
+        });
+        observer.disconnect();
+      }
+    }, { rootMargin: '200px' });
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [imageHandle, url]);
+
+  useEffect(() => {
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [url]);
+
+  return (
+    <img 
+      ref={imgRef}
+      src={url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+      alt={name} 
+      className={`w-full h-full object-cover transition-opacity duration-300 ${url ? 'opacity-100' : 'opacity-0'}`} 
+    />
+  );
+};
 
 const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => void }) => {
   const {
@@ -38,10 +76,11 @@ const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => 
   } = useSortable({ id: tag });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
     zIndex: isDragging ? 10 : 1,
     opacity: isDragging ? 0.8 : 1,
+    whiteSpace: 'nowrap' as const,
   };
 
   return (
@@ -71,6 +110,23 @@ export const TagEditor: React.FC = () => {
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [previewUrl, setPreviewUrl] = useState<string>('');
+
+  const currentImageHandle = files[selectedIndex]?.imageHandle;
+  useEffect(() => {
+    if (currentImageHandle) {
+      let objectUrl = '';
+      currentImageHandle.getFile().then(file => {
+        objectUrl = URL.createObjectURL(file);
+        setPreviewUrl(objectUrl);
+      });
+      return () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      };
+    } else {
+      setPreviewUrl('');
+    }
+  }, [currentImageHandle]);
 
   const handleOpenFolder = async () => {
     try {
@@ -94,31 +150,30 @@ export const TagEditor: React.FC = () => {
     const imageEntries = entries.filter((e: any) => e.kind === 'file' && /\.(png|jpe?g|webp|gif)$/i.test(e.name));
     const textEntries = entries.filter((e: any) => e.kind === 'file' && /\.txt$/i.test(e.name));
 
-    const fileList: FileEntry[] = [];
-
-    for (const imgHandle of imageEntries) {
+    const fileList: FileEntry[] = imageEntries.map((imgHandle: any) => {
       const baseName = imgHandle.name.substring(0, imgHandle.name.lastIndexOf('.'));
       const txtHandle = textEntries.find((t: any) => t.name === `${baseName}.txt`);
-      
-      const file = await imgHandle.getFile();
-      const imageUrl = URL.createObjectURL(file);
-      
-      let tags: string[] = [];
-      if (txtHandle) {
-        const txtFile = await txtHandle.getFile();
-        const text = await txtFile.text();
-        tags = text.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
-      }
-
-      fileList.push({
+      return {
         imageHandle: imgHandle,
         textHandle: txtHandle,
         name: imgHandle.name,
         baseName,
-        imageUrl,
-        tags
-      });
-    }
+        tags: []
+      };
+    });
+
+    // Load tags concurrently
+    await Promise.all(fileList.map(async (file) => {
+      if (file.textHandle) {
+        try {
+          const txtFile = await file.textHandle.getFile();
+          const text = await txtFile.text();
+          file.tags = text.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+        } catch (e) {
+          console.error("Error reading tags for", file.name, e);
+        }
+      }
+    }));
 
     setFiles(fileList);
     if (fileList.length > 0) {
@@ -221,7 +276,7 @@ export const TagEditor: React.FC = () => {
                 }}
                 className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.3)] z-10 scale-105' : 'border-transparent hover:border-white/30'}`}
               >
-                <img src={file.imageUrl} alt={file.name} className="w-full h-full object-cover" loading="lazy" />
+                <Thumbnail imageHandle={file.imageHandle} name={file.name} />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
                   {file.tags.length}
                 </div>
@@ -244,9 +299,9 @@ export const TagEditor: React.FC = () => {
             {/* Image Preview - Medium Size */}
             <div className="h-[35vh] min-h-[200px] max-h-[400px] shrink-0 bg-black/40 rounded-xl border border-white/5 flex items-center justify-center p-4 relative overflow-hidden group">
               <img 
-                src={files[selectedIndex].imageUrl} 
+                src={previewUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
                 alt={files[selectedIndex].name}
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                className={`max-w-full max-h-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${previewUrl ? 'opacity-100' : 'opacity-0'}`}
               />
               <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-md border border-white/10 text-xs font-medium text-zinc-300">
                 {files[selectedIndex].name}
