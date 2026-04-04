@@ -1031,6 +1031,50 @@ export const TagEditor: React.FC = () => {
                   />
                 </ReactCrop>
               </div>
+            ) : isInpaintOpen ? (
+              <div 
+                className="w-full h-full relative flex items-center justify-center overflow-hidden"
+                onMouseEnter={() => setIsHoveringCanvas(true)}
+                onMouseLeave={() => {
+                  setIsHoveringCanvas(false);
+                  stopDrawing();
+                }}
+              >
+                <TransformWrapper 
+                  disabled={inpaintMode === 'draw'} 
+                  centerOnInit 
+                  minScale={0.1} 
+                  maxScale={10} 
+                  wheel={{ step: 0.1 }}
+                >
+                  <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <canvas
+                      ref={inpaintCanvasRef}
+                      onMouseDown={startDrawing}
+                      onMouseMove={handleCanvasMouseMove}
+                      onMouseUp={stopDrawing}
+                      onTouchStart={startDrawing}
+                      onTouchMove={handleCanvasMouseMove}
+                      onTouchEnd={stopDrawing}
+                      className={`max-w-full max-h-full object-contain shadow-2xl ${inpaintMode === 'draw' ? 'cursor-none' : 'cursor-grab active:cursor-grabbing'}`}
+                    />
+                  </TransformComponent>
+                </TransformWrapper>
+
+                {/* Custom Cursor for Brush */}
+                {isHoveringCanvas && inpaintMode === 'draw' && (
+                  <div 
+                    className="fixed pointer-events-none rounded-full border-2 border-white mix-blend-difference z-50 transform -translate-x-1/2 -translate-y-1/2"
+                    style={{
+                      left: inpaintCursorPos.x,
+                      top: inpaintCursorPos.y,
+                      width: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().width / inpaintCanvasRef.current.width) : 1),
+                      height: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().height / inpaintCanvasRef.current.height) : 1),
+                      backgroundColor: brushColor + '40'
+                    }}
+                  />
+                )}
+              </div>
             ) : (
               <TransformWrapper centerOnInit minScale={0.1} maxScale={10} wheel={{ step: 0.1 }}>
                 <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1044,8 +1088,44 @@ export const TagEditor: React.FC = () => {
               </TransformWrapper>
             )}
 
-            {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
+            {/* Overlays Wrapper */}
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] flex flex-col items-center justify-end z-50 pointer-events-none">
+              
+              {/* Global Floating Progress Bar */}
+              {(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') && (
+                <div className="w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 mb-4 pointer-events-auto animate-in slide-in-from-bottom-4 fade-in duration-300">
+                  <div className="flex justify-between text-sm text-white font-medium mb-2">
+                    <span>
+                      {wdStatus !== 'idle' ? wdProgressText : 
+                       batchStatus !== 'idle' ? 'Processing batch...' : 
+                       zipProgressText}
+                    </span>
+                    <span>
+                      {wdStatus !== 'idle' ? wdProgress : 
+                       batchStatus !== 'idle' ? batchProgress : 
+                       zipProgress}%
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ease-out ${
+                        wdStatus !== 'idle' ? 'bg-purple-500' : 
+                        batchStatus !== 'idle' ? 'bg-blue-500' : 
+                        'bg-orange-500'
+                      }`}
+                      style={{ width: `${
+                        wdStatus !== 'idle' ? wdProgress : 
+                        batchStatus !== 'idle' ? batchProgress : 
+                        zipProgress
+                      }%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="relative w-full flex justify-center">
+                {/* Floating Tag Editor Overlay (Centered Landscape) */}
+                <div className={`w-full max-h-[85vh] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isCropping || isAutoTagModalOpen || isZipModalOpen || isInpaintOpen ? 'opacity-0 scale-95 absolute bottom-0 pointer-events-none' : 'opacity-100 scale-100 relative'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -1113,14 +1193,6 @@ export const TagEditor: React.FC = () => {
                     </button>
 
                     <button 
-                      onClick={() => setIsInpaintOpen(true)} 
-                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
-                      title="Inpaint / Draw"
-                    >
-                      <Paintbrush size={16}/> Inpaint
-                    </button>
-
-                    <button 
                       onClick={() => setIsCropping(true)} 
                       className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
                     >
@@ -1167,7 +1239,7 @@ export const TagEditor: React.FC = () => {
             </div>
 
             {/* Floating Crop Controls */}
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 pointer-events-auto transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
               <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10 mr-2">
                 <button 
                   onClick={handleUndoCrop} 
@@ -1208,17 +1280,9 @@ export const TagEditor: React.FC = () => {
                 {saveStatus === 'saving' ? 'Applying...' : 'Apply Crop'}
               </button>
             </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center justify-center text-zinc-500 gap-4">
-            <ImageIcon size={64} strokeWidth={1} className="opacity-50" />
-            <p>Select an image from the sidebar</p>
-          </div>
-        )}
-      </div>
 
-      {/* Floating Auto Tag & Batch Processing Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+            {/* Floating Auto Tag & Batch Processing Overlay */}
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
         <button 
           onClick={() => setIsAutoTagModalOpen(false)}
           className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
@@ -1396,8 +1460,8 @@ export const TagEditor: React.FC = () => {
         )}
       </div>
 
-      {/* Floating ZIP Overlay */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+            {/* Floating ZIP Overlay */}
+            <div className={`w-full max-h-[85vh] flex flex-col bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden pointer-events-auto transition-all duration-300 ease-in-out ${isZipModalOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
         <button 
           onClick={() => setIsZipModalOpen(false)}
           className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors z-10"
@@ -1513,148 +1577,66 @@ export const TagEditor: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Inpaint Overlay */}
-      <div className={`absolute inset-4 flex flex-col bg-[#18181b] rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`}>
-        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <Paintbrush size={18} className="text-pink-400" />
-              Inpaint / Draw
-            </h2>
-            
-            <div className="h-6 w-px bg-white/10 mx-2"></div>
-            
-            {/* Tools */}
-            <div className="flex items-center gap-2 bg-black/50 p-1 rounded-lg border border-white/10">
-              <button 
-                onClick={() => setInpaintMode('draw')}
-                className={`p-2 rounded-md transition-colors ${inpaintMode === 'draw' ? 'bg-pink-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
-                title="Draw Mode"
-              >
-                <Paintbrush size={16} />
-              </button>
-              <button 
-                onClick={() => setInpaintMode('pan')}
-                className={`p-2 rounded-md transition-colors ${inpaintMode === 'pan' ? 'bg-blue-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
-                title="Pan Mode"
-              >
-                <MousePointer2 size={16} />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 ml-4">
-              <label className="text-sm text-zinc-300">Size:</label>
-              <input 
-                type="range" min="1" max="200" 
-                value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))}
-                className="w-32 accent-pink-500"
-              />
-              <span className="text-xs text-zinc-500 w-8">{brushSize}px</span>
-            </div>
-
-            <div className="flex items-center gap-3 ml-4">
-              <label className="text-sm text-zinc-300">Color:</label>
-              <input 
-                type="color" 
-                value={brushColor} onChange={e => setBrushColor(e.target.value)}
-                className="w-8 h-8 rounded cursor-pointer bg-transparent border-0 p-0"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setIsInpaintOpen(false)}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
-            >
-              Cancel
-            </button>
-            <button 
-              onClick={handleApplyInpaint}
-              className="px-6 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors"
-            >
-              <Save size={16} />
-              Apply
-            </button>
-          </div>
-        </div>
-
-        <div 
-          className="flex-1 relative bg-black/80 overflow-hidden flex items-center justify-center"
-          onMouseEnter={() => setIsHoveringCanvas(true)}
-          onMouseLeave={() => {
-            setIsHoveringCanvas(false);
-            stopDrawing();
-          }}
-        >
-          <TransformWrapper 
-            disabled={inpaintMode === 'draw'} 
-            centerOnInit 
-            minScale={0.1} 
-            maxScale={10} 
-            wheel={{ step: 0.1 }}
+            {/* Floating Inpaint Controls */}
+            <div className={`flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl p-3 pointer-events-auto transition-all duration-300 ease-in-out ${isInpaintOpen ? 'opacity-100 scale-100 relative' : 'opacity-0 scale-95 absolute bottom-0 pointer-events-none'}`}>
+        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10">
+          <button 
+            onClick={() => setInpaintMode('draw')}
+            className={`p-2 rounded-md transition-colors ${inpaintMode === 'draw' ? 'bg-pink-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+            title="Draw Mode"
           >
-            <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }} contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <canvas
-                ref={inpaintCanvasRef}
-                onMouseDown={startDrawing}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseUp={stopDrawing}
-                onTouchStart={startDrawing}
-                onTouchMove={handleCanvasMouseMove}
-                onTouchEnd={stopDrawing}
-                className={`max-w-full max-h-full object-contain shadow-2xl ${inpaintMode === 'draw' ? 'cursor-none' : 'cursor-grab active:cursor-grabbing'}`}
-              />
-            </TransformComponent>
-          </TransformWrapper>
-
-          {/* Custom Cursor for Brush */}
-          {isHoveringCanvas && inpaintMode === 'draw' && (
-            <div 
-              className="fixed pointer-events-none rounded-full border-2 border-white mix-blend-difference z-50 transform -translate-x-1/2 -translate-y-1/2"
-              style={{
-                left: inpaintCursorPos.x,
-                top: inpaintCursorPos.y,
-                width: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().width / inpaintCanvasRef.current.width) : 1),
-                height: brushSize * (inpaintCanvasRef.current ? (inpaintCanvasRef.current.getBoundingClientRect().height / inpaintCanvasRef.current.height) : 1),
-                backgroundColor: brushColor + '40'
-              }}
-            />
-          )}
+            <Paintbrush size={16} />
+          </button>
+          <button 
+            onClick={() => setInpaintMode('pan')}
+            className={`p-2 rounded-md transition-colors ${inpaintMode === 'pan' ? 'bg-blue-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+            title="Pan Mode"
+          >
+            <MousePointer2 size={16} />
+          </button>
         </div>
+
+        <div className="flex items-center gap-3 px-2">
+          <input 
+            type="range" min="1" max="200" 
+            value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))}
+            className="w-24 accent-pink-500"
+            title="Brush Size"
+          />
+          <input 
+            type="color" 
+            value={brushColor} onChange={e => setBrushColor(e.target.value)}
+            className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 p-0"
+            title="Brush Color"
+          />
+        </div>
+
+        <div className="h-6 w-px bg-white/10 mx-1"></div>
+
+        <button 
+          onClick={() => setIsInpaintOpen(false)}
+          className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white/10 hover:bg-white/20 text-white"
+        >
+          <X size={16}/> Cancel
+        </button>
+        <button 
+          onClick={handleApplyInpaint}
+          className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors"
+        >
+          <Save size={16} /> Apply
+        </button>
       </div>
 
-      {/* Global Floating Progress Bar */}
-      {(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 z-[100] animate-in slide-in-from-top-4 fade-in duration-300">
-          <div className="flex justify-between text-sm text-white font-medium mb-2">
-            <span>
-              {wdStatus !== 'idle' ? wdProgressText : 
-               batchStatus !== 'idle' ? 'Processing batch...' : 
-               zipProgressText}
-            </span>
-            <span>
-              {wdStatus !== 'idle' ? wdProgress : 
-               batchStatus !== 'idle' ? batchProgress : 
-               zipProgress}%
-            </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center text-zinc-500 gap-4">
+            <ImageIcon size={64} strokeWidth={1} className="opacity-50" />
+            <p>Select an image from the sidebar</p>
           </div>
-          <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-            <div 
-              className={`h-full transition-all duration-300 ease-out ${
-                wdStatus !== 'idle' ? 'bg-purple-500' : 
-                batchStatus !== 'idle' ? 'bg-blue-500' : 
-                'bg-orange-500'
-              }`}
-              style={{ width: `${
-                wdStatus !== 'idle' ? wdProgress : 
-                batchStatus !== 'idle' ? batchProgress : 
-                zipProgress
-              }%` }}
-            />
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
