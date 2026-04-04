@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -124,6 +124,14 @@ export const TagEditor: React.FC = () => {
   });
   const activeTags = tagState.current;
 
+  const [imageState, setImageState] = useState<{
+    history: string[];
+    index: number;
+  }>({
+    history: [],
+    index: 0
+  });
+
   const [newTag, setNewTag] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [previewUrl, setPreviewUrl] = useState<string>('');
@@ -198,17 +206,20 @@ export const TagEditor: React.FC = () => {
       const cached = urlCache.current.get(name);
       if (cached) {
         setPreviewUrl(cached);
+        setImageState({ history: [cached], index: 0 });
       } else {
         currentImageHandle.getFile().then(file => {
           const objectUrl = URL.createObjectURL(file);
           urlCache.current.set(name, objectUrl);
           if (files[selectedIndex]?.name === name) {
             setPreviewUrl(objectUrl);
+            setImageState({ history: [objectUrl], index: 0 });
           }
         });
       }
     } else {
       setPreviewUrl('');
+      setImageState({ history: [], index: 0 });
     }
   }, [currentImageHandle, selectedIndex, files]);
 
@@ -357,6 +368,13 @@ export const TagEditor: React.FC = () => {
           const newObjectUrl = URL.createObjectURL(croppedBlob);
           urlCache.current.set(currentFile.name, newObjectUrl);
           setPreviewUrl(newObjectUrl);
+          
+          setImageState(prev => {
+            const newHistory = prev.history.slice(0, prev.index + 1);
+            newHistory.push(newObjectUrl);
+            return { history: newHistory, index: newHistory.length - 1 };
+          });
+
           setCrop(undefined); // reset crop
           setIsCropping(false);
         }
@@ -378,14 +396,62 @@ export const TagEditor: React.FC = () => {
     }
   };
 
-  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && newTag.trim()) {
+  const handleUndoCrop = async () => {
+    if (imageState.index > 0) {
+      const newIndex = imageState.index - 1;
+      const previousUrl = imageState.history[newIndex];
+      setImageState(prev => ({ ...prev, index: newIndex }));
+      setPreviewUrl(previousUrl);
+      urlCache.current.set(files[selectedIndex].name, previousUrl);
+      
+      try {
+        const response = await fetch(previousUrl);
+        const blob = await response.blob();
+        // @ts-ignore
+        const writableImg = await files[selectedIndex].imageHandle.createWritable();
+        await writableImg.write(blob);
+        await writableImg.close();
+      } catch (e) {
+        console.error("Failed to write undo crop to disk", e);
+      }
+    }
+  };
+
+  const handleRedoCrop = async () => {
+    if (imageState.index < imageState.history.length - 1) {
+      const newIndex = imageState.index + 1;
+      const nextUrl = imageState.history[newIndex];
+      setImageState(prev => ({ ...prev, index: newIndex }));
+      setPreviewUrl(nextUrl);
+      urlCache.current.set(files[selectedIndex].name, nextUrl);
+      
+      try {
+        const response = await fetch(nextUrl);
+        const blob = await response.blob();
+        // @ts-ignore
+        const writableImg = await files[selectedIndex].imageHandle.createWritable();
+        await writableImg.write(blob);
+        await writableImg.close();
+      } catch (e) {
+        console.error("Failed to write redo crop to disk", e);
+      }
+    }
+  };
+
+  const commitNewTag = () => {
+    if (newTag.trim()) {
       const tagsToAdd = newTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
       updateTags(prev => {
         const newTags = [...prev, ...tagsToAdd.filter(t => !prev.includes(t))];
         return newTags;
       });
       setNewTag('');
+    }
+  };
+
+  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      commitNewTag();
     }
   };
 
@@ -513,28 +579,50 @@ export const TagEditor: React.FC = () => {
                <div className="flex items-center justify-between p-3 bg-black/40 border-t border-white/10 gap-4">
                   {/* Left: Other Buttons */}
                   <div className="flex items-center gap-2 shrink-0">
-                    <button 
-                      onClick={handleUndo} 
-                      disabled={tagState.index <= 0} 
-                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-30 transition-colors"
-                      title="Undo (Ctrl+Z)"
-                    >
-                      <Undo2 size={18}/>
-                    </button>
-                    <button 
-                      onClick={handleRedo} 
-                      disabled={tagState.index >= tagState.history.length - 1} 
-                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white disabled:opacity-30 transition-colors"
-                      title="Redo (Ctrl+Shift+Z)"
-                    >
-                      <Redo2 size={18}/>
-                    </button>
+                    <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10">
+                      <button 
+                        onClick={handleUndo} 
+                        disabled={tagState.index <= 0} 
+                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
+                        title="Undo Tag (Ctrl+Z)"
+                      >
+                        <Undo2 size={16}/> <span className="text-xs font-medium">Tag</span>
+                      </button>
+                      <button 
+                        onClick={handleRedo} 
+                        disabled={tagState.index >= tagState.history.length - 1} 
+                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
+                        title="Redo Tag (Ctrl+Shift+Z)"
+                      >
+                        <Redo2 size={16}/> <span className="text-xs font-medium">Tag</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center bg-white/5 rounded-lg overflow-hidden border border-white/10">
+                      <button 
+                        onClick={handleUndoCrop} 
+                        disabled={imageState.index <= 0} 
+                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors border-r border-white/10 flex items-center gap-1"
+                        title="Undo Crop"
+                      >
+                        <Undo2 size={16}/> <span className="text-xs font-medium">Crop</span>
+                      </button>
+                      <button 
+                        onClick={handleRedoCrop} 
+                        disabled={imageState.index >= imageState.history.length - 1} 
+                        className="px-3 py-2 hover:bg-white/10 text-white disabled:opacity-30 transition-colors flex items-center gap-1"
+                        title="Redo Crop"
+                      >
+                        <Redo2 size={16}/> <span className="text-xs font-medium">Crop</span>
+                      </button>
+                    </div>
+
                     <button 
                       onClick={() => {
                         setIsCropping(!isCropping);
                         if (isCropping) setCrop(undefined);
                       }} 
-                      className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isCropping ? 'bg-blue-500 text-white' : 'bg-white/5 hover:bg-white/10 text-white'}`}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 ${isCropping ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/5 hover:bg-white/10 text-white'}`}
                     >
                       <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Crop'}
                     </button>
@@ -542,14 +630,24 @@ export const TagEditor: React.FC = () => {
 
                   {/* Right: Input & Save */}
                   <div className="flex items-center gap-2 flex-1">
-                    <input 
-                      type="text"
-                      value={newTag}
-                      onChange={(e) => setNewTag(e.target.value)}
-                      onKeyDown={handleAddTag}
-                      placeholder="Add tags (comma separated)..."
-                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
-                    />
+                    <div className="relative flex-1 flex items-center">
+                      <input 
+                        type="text"
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={handleAddTag}
+                        placeholder="Add tags (comma separated)..."
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-4 pr-10 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all"
+                      />
+                      <button
+                        onClick={commitNewTag}
+                        disabled={!newTag.trim()}
+                        className="absolute right-2 p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+                        title="Add Tag"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </div>
                     <button 
                       onClick={handleSave}
                       disabled={saveStatus === 'saving'}
