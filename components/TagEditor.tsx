@@ -555,7 +555,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Floating Tag Editor Overlay (Centered Landscape) */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] max-h-[85%] flex flex-col bg-black/60 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 overflow-hidden transition-all duration-300 ease-in-out ${isCropping ? 'opacity-0 translate-y-8 pointer-events-none' : 'opacity-100 translate-y-0'}`}>
                
                {/* Tags Area (Top) */}
                <div className="p-5 min-h-[120px] max-h-[30vh] overflow-y-auto custom-scrollbar">
@@ -618,13 +618,10 @@ export const TagEditor: React.FC = () => {
                     </div>
 
                     <button 
-                      onClick={() => {
-                        setIsCropping(!isCropping);
-                        if (isCropping) setCrop(undefined);
-                      }} 
-                      className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 ${isCropping ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/5 hover:bg-white/10 text-white'}`}
+                      onClick={() => setIsCropping(true)} 
+                      className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10 bg-white/5 hover:bg-white/10 text-white"
                     >
-                      <CropIcon size={16}/> {isCropping ? 'Cancel Crop' : 'Crop'}
+                      <CropIcon size={16}/> Crop
                     </button>
                   </div>
 
@@ -664,6 +661,31 @@ export const TagEditor: React.FC = () => {
                     </button>
                   </div>
                </div>
+            </div>
+
+            {/* Floating Crop Controls */}
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/80 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl z-50 p-3 transition-all duration-300 ease-in-out ${isCropping ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
+              <button 
+                onClick={() => {
+                  setIsCropping(false);
+                  setCrop(undefined);
+                }} 
+                className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X size={16}/> Cancel
+              </button>
+              <button 
+                onClick={handleSave}
+                disabled={saveStatus === 'saving' || !crop || crop.width === 0}
+                className="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+              >
+                {saveStatus === 'saving' ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <CropIcon size={16} />
+                )}
+                {saveStatus === 'saving' ? 'Applying...' : 'Apply Crop'}
+              </button>
             </div>
           </>
         ) : (
