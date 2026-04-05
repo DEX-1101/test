@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 
 // Set WASM paths to CDN to avoid Vite bundling issues
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
@@ -104,6 +104,11 @@ export class WDTagger {
   private session: ort.InferenceSession | null = null;
   private tags: TagInfo[] = [];
   private currentModelId: string | null = null;
+  private currentProvider: string = 'wasm';
+
+  getProvider(): string {
+    return this.currentProvider;
+  }
 
   async init(modelId: string, onProgress?: (progress: number, status: string) => void) {
     if (this.session && this.currentModelId === modelId) return;
@@ -169,21 +174,31 @@ export class WDTagger {
       if (onProgress) onProgress(100, 'Model loaded from cache.');
     }
 
-    if (onProgress) onProgress(100, 'Initializing ONNX session (WebGL/WASM)...');
+    if (onProgress) onProgress(100, 'Initializing ONNX session...');
     
     try {
       this.session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: ['webgl', 'wasm']
+        executionProviders: ['webgpu']
       });
+      this.currentProvider = 'webgpu';
     } catch (e) {
-      console.warn("WebGL failed, falling back to WASM", e);
-      this.session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: ['wasm']
-      });
+      console.warn("WebGPU failed, trying WebGL", e);
+      try {
+        this.session = await ort.InferenceSession.create(modelBuffer, {
+          executionProviders: ['webgl']
+        });
+        this.currentProvider = 'webgl';
+      } catch (e2) {
+        console.warn("WebGL failed, falling back to WASM", e2);
+        this.session = await ort.InferenceSession.create(modelBuffer, {
+          executionProviders: ['wasm']
+        });
+        this.currentProvider = 'wasm';
+      }
     }
     
     this.currentModelId = modelId;
-    if (onProgress) onProgress(100, 'Ready');
+    if (onProgress) onProgress(100, `Ready (${this.currentProvider.toUpperCase()})`);
   }
 
   preprocessImage(image: HTMLImageElement): Float32Array {
