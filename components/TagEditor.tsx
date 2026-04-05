@@ -30,6 +30,7 @@ interface FileEntry {
   name: string;
   baseName: string;
   tags: string[];
+  parentHandle: FileSystemDirectoryHandle;
 }
 
 const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFileHandle, name: string, urlCache: React.MutableRefObject<Map<string, string>> }) => {
@@ -169,6 +170,7 @@ export const TagEditor: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
   const [wdTopK, setWdTopK] = useState(() => parseInt(localStorage.getItem('wd_topK') || '0'));
+  const [wdRecursive, setWdRecursive] = useState(() => localStorage.getItem('wd_recursive') === 'true');
   const [wdModelExists, setWdModelExists] = useState(false);
 
   // ZIP State
@@ -222,9 +224,9 @@ export const TagEditor: React.FC = () => {
     } else if (deleteConfirm.type === 'file' && deleteConfirm.idx !== undefined) {
       const file = files[deleteConfirm.idx];
       try {
-        await directoryHandle?.removeEntry(file.name);
+        await file.parentHandle.removeEntry(file.imageHandle.name);
         if (file.textHandle) {
-          await directoryHandle?.removeEntry(file.textHandle.name);
+          await file.parentHandle.removeEntry(file.textHandle.name);
         }
         
         const newFiles = [...files];
@@ -256,6 +258,7 @@ export const TagEditor: React.FC = () => {
     localStorage.setItem('wd_removeRedundant', wdRemoveRedundant.toString());
     localStorage.setItem('wd_excludeCategories', JSON.stringify(wdExcludeCategories));
     localStorage.setItem('wd_topK', wdTopK.toString());
+    localStorage.setItem('wd_recursive', wdRecursive.toString());
     localStorage.setItem('batch_activation', batchActivationTags);
     localStorage.setItem('batch_emphasize', batchEmphasizeTags);
     localStorage.setItem('batch_remove', batchRemoveTags);
@@ -336,14 +339,12 @@ export const TagEditor: React.FC = () => {
 
         updatedFiles[i].tags = generatedTags;
 
-        let txtHandle = file.textHandle;
-        if (!txtHandle) {
-          txtHandle = await directoryHandle.getFileHandle(`${file.baseName}.txt`, { create: true });
-          updatedFiles[i].textHandle = txtHandle;
-        }
-        
         // @ts-ignore
-        const writable = await txtHandle.createWritable();
+        const writable = await file.parentHandle.getFileHandle(`${file.baseName.split('/').pop()}.txt`, { create: true }).then(h => {
+          updatedFiles[i].textHandle = h;
+          // @ts-ignore
+          return h.createWritable();
+        });
         await writable.write(generatedTags.join(', '));
         await writable.close();
       }
@@ -435,14 +436,12 @@ export const TagEditor: React.FC = () => {
 
         updatedFiles[i].tags = uniqueTags;
 
-        let txtHandle = file.textHandle;
-        if (!txtHandle) {
-          txtHandle = await directoryHandle.getFileHandle(`${file.baseName}.txt`, { create: true });
-          updatedFiles[i].textHandle = txtHandle;
-        }
-        
         // @ts-ignore
-        const writable = await txtHandle.createWritable();
+        const writable = await file.parentHandle.getFileHandle(`${file.baseName.split('/').pop()}.txt`, { create: true }).then(h => {
+          updatedFiles[i].textHandle = h;
+          // @ts-ignore
+          return h.createWritable();
+        });
         await writable.write(uniqueTags.join(', '));
         await writable.close();
         
@@ -477,26 +476,26 @@ export const TagEditor: React.FC = () => {
           const newTxtName = `${counter}.txt`;
 
           if (file.name !== newImgName) {
-            const newImgHandle = await directoryHandle.getFileHandle(newImgName, { create: true });
+            const newImgHandle = await file.parentHandle.getFileHandle(newImgName, { create: true });
             const imgFile = await file.imageHandle.getFile();
             // @ts-ignore
             const imgWritable = await newImgHandle.createWritable();
             await imgWritable.write(imgFile);
             await imgWritable.close();
-            await directoryHandle.removeEntry(file.name);
+            await file.parentHandle.removeEntry(file.imageHandle.name);
             updatedFiles[i].imageHandle = newImgHandle;
-            updatedFiles[i].name = newImgName;
-            updatedFiles[i].baseName = `${counter}`;
+            updatedFiles[i].name = (file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/') + 1) : '') + newImgName;
+            updatedFiles[i].baseName = (file.baseName.includes('/') ? file.baseName.substring(0, file.baseName.lastIndexOf('/') + 1) : '') + `${counter}`;
           }
 
           if (file.textHandle && file.textHandle.name !== newTxtName) {
-            const newTxtHandle = await directoryHandle.getFileHandle(newTxtName, { create: true });
+            const newTxtHandle = await file.parentHandle.getFileHandle(newTxtName, { create: true });
             const txtFile = await file.textHandle.getFile();
             // @ts-ignore
             const txtWritable = await newTxtHandle.createWritable();
             await txtWritable.write(txtFile);
             await txtWritable.close();
-            await directoryHandle.removeEntry(file.textHandle.name);
+            await file.parentHandle.removeEntry(file.textHandle.name);
             updatedFiles[i].textHandle = newTxtHandle;
           }
           counter++;
@@ -927,32 +926,47 @@ export const TagEditor: React.FC = () => {
       urlCache.current.clear();
       
       setDirectoryHandle(dirHandle);
-      await loadFiles(dirHandle);
+      await loadFiles(dirHandle, wdRecursive);
     } catch (err) {
       console.error(err);
     }
   };
 
-  const loadFiles = async (dirHandle: any) => {
-    const entries: any[] = [];
-    for await (const entry of dirHandle.values()) {
-      entries.push(entry);
+  const loadFiles = async (dirHandle: FileSystemDirectoryHandle, isRecursive: boolean) => {
+    const fileList: FileEntry[] = [];
+
+    async function scan(handle: FileSystemDirectoryHandle, relativePath: string = '') {
+      const entries: FileSystemHandle[] = [];
+      // @ts-ignore
+      for await (const entry of handle.values()) {
+        entries.push(entry);
+      }
+
+      const imageEntries = entries.filter((e: any) => e.kind === 'file' && /\.(png|jpe?g|webp|gif)$/i.test(e.name)) as FileSystemFileHandle[];
+      const textEntries = entries.filter((e: any) => e.kind === 'file' && /\.txt$/i.test(e.name)) as FileSystemFileHandle[];
+
+      for (const imgHandle of imageEntries) {
+        const baseName = imgHandle.name.substring(0, imgHandle.name.lastIndexOf('.'));
+        const txtHandle = textEntries.find((t: any) => t.name === `${baseName}.txt`);
+        fileList.push({
+          imageHandle: imgHandle,
+          textHandle: txtHandle,
+          name: relativePath + imgHandle.name,
+          baseName: relativePath + baseName,
+          tags: [],
+          parentHandle: handle
+        });
+      }
+
+      if (isRecursive) {
+        const subDirs = entries.filter((e: any) => e.kind === 'directory') as FileSystemDirectoryHandle[];
+        for (const subDir of subDirs) {
+          await scan(subDir, relativePath + subDir.name + '/');
+        }
+      }
     }
 
-    const imageEntries = entries.filter((e: any) => e.kind === 'file' && /\.(png|jpe?g|webp|gif)$/i.test(e.name));
-    const textEntries = entries.filter((e: any) => e.kind === 'file' && /\.txt$/i.test(e.name));
-
-    const fileList: FileEntry[] = imageEntries.map((imgHandle: any) => {
-      const baseName = imgHandle.name.substring(0, imgHandle.name.lastIndexOf('.'));
-      const txtHandle = textEntries.find((t: any) => t.name === `${baseName}.txt`);
-      return {
-        imageHandle: imgHandle,
-        textHandle: txtHandle,
-        name: imgHandle.name,
-        baseName,
-        tags: []
-      };
-    });
+    await scan(dirHandle);
 
     // Load tags concurrently
     await Promise.all(fileList.map(async (file) => {
@@ -1016,7 +1030,7 @@ export const TagEditor: React.FC = () => {
       
       if (!txtHandle) {
         // @ts-ignore
-        txtHandle = await directoryHandle.getFileHandle(`${currentFile.baseName}.txt`, { create: true });
+        txtHandle = await currentFile.parentHandle.getFileHandle(`${currentFile.baseName.split('/').pop()}.txt`, { create: true });
       }
 
       // @ts-ignore
@@ -1162,6 +1176,16 @@ export const TagEditor: React.FC = () => {
       {/* Sidebar (Left) */}
       <div className="w-[300px] flex flex-col bg-black/40 border-r border-white/5 shrink-0 overflow-hidden z-10">
         <div className="p-4 border-b border-white/5 flex flex-col gap-2">
+          <div className="flex items-center gap-2 px-1">
+            <input 
+              type="checkbox" id="wdRecursive"
+              checked={wdRecursive} onChange={e => setWdRecursive(e.target.checked)}
+              className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
+            />
+            <label htmlFor="wdRecursive" className="text-xs font-medium text-zinc-400 cursor-pointer select-none">
+              Recursive Scan
+            </label>
+          </div>
           <button 
             onClick={handleOpenFolder}
             disabled={isProcessing}
@@ -1289,13 +1313,13 @@ export const TagEditor: React.FC = () => {
               
               {/* Global Floating Progress Bar */}
               <div className={`absolute bottom-full mb-4 w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 pointer-events-auto transition-all duration-300 ease-in-out ${(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
-                <div className="flex justify-between text-sm text-white font-medium mb-2">
-                  <span>
+                <div className="flex justify-between text-sm text-white font-medium mb-2 gap-2">
+                  <span className="truncate">
                     {wdStatus !== 'idle' ? wdProgressText : 
                      batchStatus !== 'idle' ? batchProgressText : 
                      zipProgressText}
                   </span>
-                  <span>
+                  <span className="shrink-0">
                     {wdStatus !== 'idle' ? wdProgress : 
                      batchStatus !== 'idle' ? batchProgress : 
                      zipProgress}%
@@ -1548,34 +1572,28 @@ export const TagEditor: React.FC = () => {
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-300">Exclude Categories</label>
-              <div className="flex flex-wrap gap-2">
-                {wdExcludeCategories.map(catId => {
-                  const catName = ['General', 'Artist', '', 'Copyright', 'Character', 'Meta'][catId];
+              <div className="grid grid-cols-3 gap-1.5">
+                {[0, 1, 3, 4, 5].map(id => {
+                  const name = ['General', 'Artist', '', 'Copyright', 'Character', 'Meta'][id];
+                  if (!name) return null;
+                  const isExcluded = wdExcludeCategories.includes(id);
                   return (
-                    <div key={catId} className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-md text-xs text-white">
-                      <span>{catName}</span>
-                      <button onClick={() => setWdExcludeCategories(prev => prev.filter(id => id !== catId))} className="text-zinc-400 hover:text-white">
-                        <X size={12} />
-                      </button>
-                    </div>
+                    <button
+                      key={id}
+                      onClick={() => {
+                        if (isExcluded) {
+                          setWdExcludeCategories(prev => prev.filter(x => x !== id));
+                        } else {
+                          setWdExcludeCategories(prev => [...prev, id]);
+                        }
+                      }}
+                      className={`px-2 py-1.5 rounded-md text-[11px] font-medium transition-all border ${isExcluded ? 'bg-themePrimary/20 border-themePrimary/40 text-white' : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10'}`}
+                    >
+                      {name}
+                    </button>
                   );
                 })}
               </div>
-              <select 
-                onChange={(e) => {
-                  const val = parseInt(e.target.value);
-                  if (val !== -1 && !wdExcludeCategories.includes(val)) {
-                    setWdExcludeCategories(prev => [...prev, val]);
-                  }
-                  e.target.value = "-1";
-                }}
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-themePrimary/50"
-              >
-                <option value="-1">Add category to exclude...</option>
-                {[0, 1, 3, 4, 5].filter(id => !wdExcludeCategories.includes(id)).map(id => (
-                  <option key={id} value={id}>{['General', 'Artist', '', 'Copyright', 'Character', 'Meta'][id]}</option>
-                ))}
-              </select>
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
@@ -1585,7 +1603,7 @@ export const TagEditor: React.FC = () => {
                 className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
               />
               <label htmlFor="wdRemoveRedundant" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
-                Remove redundant tags (e.g. "shirt" if "black shirt" exists)
+                Remove redundant tags
               </label>
             </div>
 
