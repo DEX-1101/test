@@ -215,9 +215,10 @@ export class WDTagger {
       const g = data[i * 4 + 1];
       const b = data[i * 4 + 2];
       
-      float32Data[i] = r / 127.5 - 1.0;
-      float32Data[targetSize * targetSize + i] = g / 127.5 - 1.0;
-      float32Data[2 * targetSize * targetSize + i] = b / 127.5 - 1.0;
+      // WD Tagger models expect NHWC layout, BGR format, values 0-255
+      float32Data[i * 3] = b;
+      float32Data[i * 3 + 1] = g;
+      float32Data[i * 3 + 2] = r;
     }
     
     return float32Data;
@@ -227,7 +228,7 @@ export class WDTagger {
     if (!this.session) throw new Error("Session not initialized");
     
     const inputData = this.preprocessImage(image);
-    const tensor = new ort.Tensor('float32', inputData, [1, 3, 448, 448]);
+    const tensor = new ort.Tensor('float32', inputData, [1, 448, 448, 3]);
     
     const feeds: Record<string, ort.Tensor> = {};
     feeds[this.session.inputNames[0]] = tensor;
