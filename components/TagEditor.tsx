@@ -99,13 +99,13 @@ const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => 
       style={style}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-100 px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-blue-500/20 cursor-grab active:cursor-grabbing relative ${isDragging ? 'shadow-lg shadow-black/50 scale-105 z-50' : ''}`}
+      className={`flex items-center gap-1.5 bg-themePrimary/10 border border-themePrimary/20 text-white px-3 py-1.5 rounded-md text-sm font-medium group transition-colors hover:bg-themePrimary/20 cursor-grab active:cursor-grabbing relative ${isDragging ? 'shadow-lg shadow-black/50 scale-105 z-50' : ''}`}
     >
       <span>{tag}</span>
       <button 
         onPointerDown={(e) => e.stopPropagation()} // Prevent dragging when clicking X
         onClick={() => onRemove(tag)}
-        className="text-blue-300 hover:text-white opacity-60 group-hover:opacity-100 transition-opacity ml-1 bg-blue-500/20 rounded-full p-0.5"
+        className="text-white/60 hover:text-white opacity-60 group-hover:opacity-100 transition-opacity ml-1 bg-themePrimary/20 rounded-full p-0.5"
       >
         <X size={12} />
       </button>
@@ -163,6 +163,12 @@ export const TagEditor: React.FC = () => {
   const [wdThreshold, setWdThreshold] = useState(() => parseFloat(localStorage.getItem('wd_thresh') || '0.35'));
   const [wdCharThreshold, setWdCharThreshold] = useState(() => parseFloat(localStorage.getItem('wd_charThresh') || '0.85'));
   const [wdOverwrite, setWdOverwrite] = useState(() => localStorage.getItem('wd_overwrite') === 'true');
+  const [wdRemoveRedundant, setWdRemoveRedundant] = useState(() => localStorage.getItem('wd_removeRedundant') === 'true');
+  const [wdExcludeCategories, setWdExcludeCategories] = useState<number[]>(() => {
+    const saved = localStorage.getItem('wd_excludeCategories');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [wdTopK, setWdTopK] = useState(() => parseInt(localStorage.getItem('wd_topK') || '0'));
   const [wdModelExists, setWdModelExists] = useState(false);
 
   // ZIP State
@@ -197,6 +203,48 @@ export const TagEditor: React.FC = () => {
     index: 0
   });
 
+  const cancelRef = useRef<boolean>(false);
+  const handleCancel = () => {
+    cancelRef.current = true;
+  };
+
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    type: 'model' | 'file';
+    idx?: number;
+    fileName?: string;
+  }>({ isOpen: false, type: 'file' });
+
+  const confirmDelete = async () => {
+    if (deleteConfirm.type === 'model') {
+      await deleteModelFromDB(selectedModelId);
+      setWdModelExists(false);
+    } else if (deleteConfirm.type === 'file' && deleteConfirm.idx !== undefined) {
+      const file = files[deleteConfirm.idx];
+      try {
+        await directoryHandle?.removeEntry(file.name);
+        if (file.textHandle) {
+          await directoryHandle?.removeEntry(file.textHandle.name);
+        }
+        
+        const newFiles = [...files];
+        newFiles.splice(deleteConfirm.idx, 1);
+        setFiles(newFiles);
+        
+        if (selectedIndex === deleteConfirm.idx) {
+          setSelectedIndex(-1);
+          setTagState({ current: [], history: [], index: 0 });
+        } else if (selectedIndex > deleteConfirm.idx) {
+          setSelectedIndex(selectedIndex - 1);
+        }
+      } catch (err) {
+        console.error("Failed to delete file", err);
+        alert("Failed to delete file.");
+      }
+    }
+    setDeleteConfirm({ isOpen: false, type: 'file' });
+  };
+
   const isProcessing = wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle';
 
   // Save settings to localStorage
@@ -205,6 +253,9 @@ export const TagEditor: React.FC = () => {
     localStorage.setItem('wd_thresh', wdThreshold.toString());
     localStorage.setItem('wd_charThresh', wdCharThreshold.toString());
     localStorage.setItem('wd_overwrite', wdOverwrite.toString());
+    localStorage.setItem('wd_removeRedundant', wdRemoveRedundant.toString());
+    localStorage.setItem('wd_excludeCategories', JSON.stringify(wdExcludeCategories));
+    localStorage.setItem('wd_topK', wdTopK.toString());
     localStorage.setItem('batch_activation', batchActivationTags);
     localStorage.setItem('batch_emphasize', batchEmphasizeTags);
     localStorage.setItem('batch_remove', batchRemoveTags);
@@ -214,7 +265,7 @@ export const TagEditor: React.FC = () => {
     localStorage.setItem('inpaint_brushSize', brushSize.toString());
     localStorage.setItem('inpaint_brushColor', brushColor);
     localStorage.setItem('inpaint_mode', inpaintMode);
-  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo, brushSize, brushColor, inpaintMode]);
+  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, wdRemoveRedundant, wdExcludeCategories, wdTopK, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo, brushSize, brushColor, inpaintMode]);
 
   useEffect(() => {
     checkModelExists(selectedModelId).then(exists => setWdModelExists(exists));
@@ -222,6 +273,7 @@ export const TagEditor: React.FC = () => {
 
   const handleWdProcess = async () => {
     if (!directoryHandle) return;
+    cancelRef.current = false;
     setWdStatus('loading');
     setWdProgress(0);
     setWdProgressText('Initializing WD Tagger...');
@@ -237,6 +289,10 @@ export const TagEditor: React.FC = () => {
       const totalSteps = updatedFiles.length;
 
       for (let i = 0; i < updatedFiles.length; i++) {
+        if (cancelRef.current) {
+          setWdProgressText('Cancelled');
+          break;
+        }
         const file = updatedFiles[i];
         
         // Skip if not overwriting and tags already exist
@@ -259,8 +315,24 @@ export const TagEditor: React.FC = () => {
           img.src = imgUrl;
         });
 
-        const generatedTags = await wdTagger.predict(img, wdThreshold, wdCharThreshold);
+        let generatedTags = await wdTagger.predict(img, wdThreshold, wdCharThreshold, wdExcludeCategories, wdTopK);
         URL.revokeObjectURL(imgUrl);
+
+        // Yield to main thread to prevent freezing
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        if (wdRemoveRedundant) {
+          generatedTags = generatedTags.filter(tag => {
+            const isRedundant = generatedTags.some(otherTag => {
+              if (tag === otherTag) return false;
+              // Check if tag is a distinct word/phrase in otherTag
+              const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`\\b${escapedTag}\\b`, 'i');
+              return regex.test(otherTag);
+            });
+            return !isRedundant;
+          });
+        }
 
         updatedFiles[i].tags = generatedTags;
 
@@ -284,14 +356,21 @@ export const TagEditor: React.FC = () => {
           index: 0
         });
       }
-      setWdStatus('done');
-      setWdProgress(100);
-      setWdProgressText('Done!');
-      setTimeout(() => {
+      
+      if (cancelRef.current) {
         setWdStatus('idle');
         setWdProgress(0);
         setWdProgressText('');
-      }, 1500);
+      } else {
+        setWdStatus('done');
+        setWdProgress(100);
+        setWdProgressText('Done!');
+        setTimeout(() => {
+          setWdStatus('idle');
+          setWdProgress(0);
+          setWdProgressText('');
+        }, 1500);
+      }
 
     } catch (err) {
       console.error(err);
@@ -303,10 +382,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleDeleteModel = async () => {
-    if (confirm('Are you sure you want to delete the downloaded model? It will need to be downloaded again.')) {
-      await deleteModelFromDB(selectedModelId);
-      setWdModelExists(false);
-    }
+    setDeleteConfirm({ isOpen: true, type: 'model' });
   };
 
   const cleanAndSplitTags = (tagsStr: string) => {
@@ -315,6 +391,7 @@ export const TagEditor: React.FC = () => {
 
   const handleBatchProcess = async () => {
     if (!directoryHandle) return;
+    cancelRef.current = false;
     setBatchStatus('processing');
     setBatchProgress(0);
     setBatchProgressText('Starting batch process...');
@@ -341,6 +418,10 @@ export const TagEditor: React.FC = () => {
       let currentStep = 0;
 
       for (let i = 0; i < updatedFiles.length; i++) {
+        if (cancelRef.current) {
+          setBatchProgressText('Cancelled');
+          break;
+        }
         const file = updatedFiles[i];
         let currentTags = [...file.tags];
         const originalTags = [...currentTags];
@@ -368,6 +449,9 @@ export const TagEditor: React.FC = () => {
         currentStep++;
         setBatchProgress(Math.round((currentStep / totalSteps) * 100));
         setBatchProgressText(`Processing ${file.name} (${currentStep}/${totalSteps})...`);
+        
+        // Yield to main thread
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
 
       try {
@@ -380,9 +464,13 @@ export const TagEditor: React.FC = () => {
         console.error("Failed to save meta file", e);
       }
 
-      if (batchRename) {
+      if (batchRename && !cancelRef.current) {
         let counter = 1;
         for (let i = 0; i < updatedFiles.length; i++) {
+          if (cancelRef.current) {
+            setBatchProgressText('Cancelled');
+            break;
+          }
           const file = updatedFiles[i];
           const ext = file.name.substring(file.name.lastIndexOf('.'));
           const newImgName = `${counter}${ext}`;
@@ -416,6 +504,9 @@ export const TagEditor: React.FC = () => {
           currentStep++;
           setBatchProgress(Math.round((currentStep / totalSteps) * 100));
           setBatchProgressText(`Renaming ${file.name} (${currentStep}/${totalSteps})...`);
+          
+          // Yield to main thread
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
 
@@ -427,14 +518,21 @@ export const TagEditor: React.FC = () => {
           index: 0
         });
       }
-      setBatchStatus('done');
-      setBatchProgress(100);
-      setBatchProgressText('Batch process complete!');
-      setTimeout(() => {
+      
+      if (cancelRef.current) {
         setBatchStatus('idle');
         setBatchProgress(0);
         setBatchProgressText('');
-      }, 1500);
+      } else {
+        setBatchStatus('done');
+        setBatchProgress(100);
+        setBatchProgressText('Batch process complete!');
+        setTimeout(() => {
+          setBatchStatus('idle');
+          setBatchProgress(0);
+          setBatchProgressText('');
+        }, 1500);
+      }
 
     } catch (err) {
       console.error(err);
@@ -462,6 +560,10 @@ export const TagEditor: React.FC = () => {
 
       const totalFiles = files.length;
       for (let i = 0; i < totalFiles; i++) {
+        if (cancelRef.current) {
+          setZipProgressText('Cancelled');
+          break;
+        }
         const file = files[i];
         setZipProgress(Math.round(((i + 1) / totalFiles) * (action === 'download' ? 100 : 50)));
         setZipProgressText(`Zipping ${file.name} (${i + 1}/${totalFiles})...`);
@@ -471,9 +573,20 @@ export const TagEditor: React.FC = () => {
         
         const tagsStr = file.tags.join(', ');
         await zipWriter.add(`${file.baseName}.txt`, new TextReader(tagsStr));
+        
+        // Yield to main thread
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
       
       await zipWriter.close();
+      
+      if (cancelRef.current) {
+        setZipStatus('idle');
+        setZipProgress(0);
+        setZipProgressText('');
+        return;
+      }
+
       const zipBlob = await zipFileWriter.getData();
 
       if (action === 'download') {
@@ -487,6 +600,7 @@ export const TagEditor: React.FC = () => {
         setZipProgress(100);
         setZipProgressText('Downloaded successfully!');
       } else if (action === 'upload') {
+        if (cancelRef.current) return;
         setZipProgress(50);
         setZipProgressText('Uploading to Hugging Face...');
         
@@ -997,28 +1111,7 @@ export const TagEditor: React.FC = () => {
     if (isProcessing) return;
     
     const file = files[idx];
-    if (confirm(`Are you sure you want to delete ${file.name} and its tags? This cannot be undone.`)) {
-      try {
-        await directoryHandle?.removeEntry(file.name);
-        if (file.textHandle) {
-          await directoryHandle?.removeEntry(file.textHandle.name);
-        }
-        
-        const newFiles = [...files];
-        newFiles.splice(idx, 1);
-        setFiles(newFiles);
-        
-        if (selectedIndex === idx) {
-          setSelectedIndex(-1);
-          setTagState({ current: [], history: [], index: 0 });
-        } else if (selectedIndex > idx) {
-          setSelectedIndex(selectedIndex - 1);
-        }
-      } catch (err) {
-        console.error("Failed to delete file", err);
-        alert("Failed to delete file.");
-      }
-    }
+    setDeleteConfirm({ isOpen: true, type: 'file', idx, fileName: file.name });
   };
 
   const commitNewTag = () => {
@@ -1092,7 +1185,7 @@ export const TagEditor: React.FC = () => {
                     index: 0
                   });
                 }}
-                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 group ${idx === selectedIndex ? 'border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.5)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
+                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 group ${idx === selectedIndex ? 'border-themePrimary shadow-[0_0_20px_var(--theme-primary-hover)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
               >
                 <Thumbnail imageHandle={file.imageHandle} name={file.name} urlCache={urlCache} />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
@@ -1210,11 +1303,7 @@ export const TagEditor: React.FC = () => {
                 </div>
                 <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
                   <div 
-                    className={`h-full transition-all duration-300 ease-out ${
-                      wdStatus !== 'idle' ? 'bg-purple-500' : 
-                      batchStatus !== 'idle' ? 'bg-blue-500' : 
-                      'bg-orange-500'
-                    }`}
+                    className={`h-full transition-all duration-300 ease-out bg-themePrimary`}
                     style={{ width: `${
                       wdStatus !== 'idle' ? wdProgress : 
                       batchStatus !== 'idle' ? batchProgress : 
@@ -1315,7 +1404,7 @@ export const TagEditor: React.FC = () => {
                         onKeyDown={handleAddTag}
                         disabled={isProcessing}
                         placeholder="Add tags (comma separated)..."
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-4 pr-10 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all disabled:opacity-50"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-4 pr-10 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-themePrimary/50 focus:bg-white/10 transition-all disabled:opacity-50"
                       />
                       <button
                         onClick={commitNewTag}
@@ -1429,7 +1518,7 @@ export const TagEditor: React.FC = () => {
                 <input 
                   type="range" min="0" max="1" step="0.01"
                   value={wdThreshold} onChange={e => setWdThreshold(parseFloat(e.target.value))}
-                  className="w-full accent-purple-500"
+                  className="w-full accent-themePrimary"
                 />
               </div>
               <div className="space-y-1.5">
@@ -1440,36 +1529,94 @@ export const TagEditor: React.FC = () => {
                 <input 
                   type="range" min="0" max="1" step="0.01"
                   value={wdCharThreshold} onChange={e => setWdCharThreshold(parseFloat(e.target.value))}
-                  className="w-full accent-purple-500"
+                  className="w-full accent-themePrimary"
                 />
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                <span>Limit by Maximum Number (Top-K)</span>
+                <span className="text-zinc-500">{wdTopK === 0 ? 'No Limit' : wdTopK}</span>
+              </label>
+              <input 
+                type="range" min="0" max="100" step="1"
+                value={wdTopK} onChange={e => setWdTopK(parseInt(e.target.value))}
+                className="w-full accent-themePrimary"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300">Exclude Categories</label>
+              <div className="flex flex-wrap gap-2">
+                {wdExcludeCategories.map(catId => {
+                  const catName = ['General', 'Artist', '', 'Copyright', 'Character', 'Meta'][catId];
+                  return (
+                    <div key={catId} className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-md text-xs text-white">
+                      <span>{catName}</span>
+                      <button onClick={() => setWdExcludeCategories(prev => prev.filter(id => id !== catId))} className="text-zinc-400 hover:text-white">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <select 
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  if (val !== -1 && !wdExcludeCategories.includes(val)) {
+                    setWdExcludeCategories(prev => [...prev, val]);
+                  }
+                  e.target.value = "-1";
+                }}
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-themePrimary/50"
+              >
+                <option value="-1">Add category to exclude...</option>
+                {[0, 1, 3, 4, 5].filter(id => !wdExcludeCategories.includes(id)).map(id => (
+                  <option key={id} value={id}>{['General', 'Artist', '', 'Copyright', 'Character', 'Meta'][id]}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
+              <input 
+                type="checkbox" id="wdRemoveRedundant"
+                checked={wdRemoveRedundant} onChange={e => setWdRemoveRedundant(e.target.checked)}
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
+              />
+              <label htmlFor="wdRemoveRedundant" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
+                Remove redundant tags (e.g. "shirt" if "black shirt" exists)
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-2">
               <input 
                 type="checkbox" id="wdOverwrite"
                 checked={wdOverwrite} onChange={e => setWdOverwrite(e.target.checked)}
-                className="w-4 h-4 rounded border-white/20 bg-black/50 text-purple-500 focus:ring-purple-500/50 focus:ring-offset-0"
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
               />
               <label htmlFor="wdOverwrite" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
                 Overwrite existing tags
               </label>
             </div>
 
-            <button 
-              onClick={handleWdProcess}
-              disabled={isProcessing}
-              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
-            >
-              {wdStatus === 'loading' || wdStatus === 'processing' ? (
-                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              ) : wdStatus === 'done' ? (
-                <Save size={16} />
-              ) : (
-                <Wand2 size={16} />
-              )}
-              {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? `Tagging (${wdTagger.getProvider().toUpperCase()})...` : wdStatus === 'done' ? 'Done!' : 'Generate Tags'}
-            </button>
+            {wdStatus === 'loading' || wdStatus === 'processing' ? (
+              <button 
+                onClick={handleCancel}
+                className="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white border border-red-500 text-sm font-bold flex items-center justify-center gap-2 transition-colors"
+              >
+                <X size={16} /> Cancel
+              </button>
+            ) : (
+              <button 
+                onClick={handleWdProcess}
+                disabled={isProcessing}
+                className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+              >
+                {wdStatus === 'done' ? <Save size={16} /> : <Wand2 size={16} />}
+                {wdStatus === 'done' ? 'Done!' : 'Generate Tags'}
+              </button>
+            )}
           </div>
 
           {/* Right Column: Batch Processing */}
@@ -1526,7 +1673,7 @@ export const TagEditor: React.FC = () => {
               <input 
                 type="checkbox" id="renameSeq"
                 checked={batchRename} onChange={e => setBatchRename(e.target.checked)}
-                className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
               />
               <label htmlFor="renameSeq" className="text-sm font-medium text-zinc-300 cursor-pointer select-none leading-tight">
                 Rename files sequentially (1.jpg, 1.txt)
@@ -1587,7 +1734,7 @@ export const TagEditor: React.FC = () => {
                 type="checkbox" id="zipLegacy"
                 checked={zipLegacy} onChange={e => setZipLegacy(e.target.checked)}
                 disabled={!zipPassword}
-                className="w-4 h-4 rounded border-white/20 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0 disabled:opacity-50"
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0 disabled:opacity-50"
               />
               <label htmlFor="zipLegacy" className={`text-sm font-medium cursor-pointer select-none leading-tight ${!zipPassword ? 'text-zinc-500' : 'text-zinc-300'}`}>
                 Use Legacy Encryption (ZipCrypto)
@@ -1602,24 +1749,27 @@ export const TagEditor: React.FC = () => {
               <input 
                 type="range" min="0" max="9" step="1"
                 value={zipLevel} onChange={e => setZipLevel(parseInt(e.target.value))}
-                className="w-full accent-blue-500"
+                className="w-full accent-themePrimary"
               />
             </div>
 
-            <button 
-              onClick={() => handleCreateZip('download')}
-              disabled={isProcessing}
-              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
-            >
-              {zipStatus === 'zipping' ? (
-                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              ) : zipStatus === 'done' ? (
-                <Save size={16} />
-              ) : (
-                <Download size={16} />
-              )}
-              {zipStatus === 'zipping' ? 'Creating ZIP...' : 'Download ZIP'}
-            </button>
+            {zipStatus === 'zipping' ? (
+              <button 
+                onClick={handleCancel}
+                className="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white border border-red-500 text-sm font-bold flex items-center justify-center gap-2 transition-colors mt-2"
+              >
+                <X size={16} /> Cancel
+              </button>
+            ) : (
+              <button 
+                onClick={() => handleCreateZip('download')}
+                disabled={isProcessing}
+                className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
+              >
+                {zipStatus === 'done' ? <Save size={16} /> : <Download size={16} />}
+                {zipStatus === 'done' ? 'Done!' : 'Download ZIP'}
+              </button>
+            )}
           </div>
 
           {/* Right Column: Hugging Face Upload */}
@@ -1651,20 +1801,23 @@ export const TagEditor: React.FC = () => {
               />
             </div>
 
-            <button 
-              onClick={() => handleCreateZip('upload')}
-              disabled={isProcessing || !hfToken || !hfRepo}
-              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
-            >
-              {zipStatus === 'uploading' || zipStatus === 'zipping' ? (
-                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              ) : zipStatus === 'done' ? (
-                <Save size={16} />
-              ) : (
-                <UploadCloud size={16} />
-              )}
-              {zipStatus === 'zipping' ? 'Creating ZIP...' : zipStatus === 'uploading' ? 'Uploading...' : 'Upload to Hugging Face'}
-            </button>
+            {zipStatus === 'uploading' || (zipStatus === 'zipping' && hfToken) ? (
+              <button 
+                onClick={handleCancel}
+                className="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white border border-red-500 text-sm font-bold flex items-center justify-center gap-2 transition-colors mt-auto"
+              >
+                <X size={16} /> Cancel
+              </button>
+            ) : (
+              <button 
+                onClick={() => handleCreateZip('upload')}
+                disabled={isProcessing || !hfToken || !hfRepo}
+                className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
+              >
+                {zipStatus === 'done' ? <Save size={16} /> : <UploadCloud size={16} />}
+                {zipStatus === 'done' ? 'Done!' : 'Upload to Hugging Face'}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1692,14 +1845,14 @@ export const TagEditor: React.FC = () => {
         <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10">
           <button 
             onClick={() => setInpaintMode('draw')}
-            className={`p-2 rounded-md transition-colors ${inpaintMode === 'draw' ? 'bg-pink-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+            className={`p-2 rounded-md transition-colors ${inpaintMode === 'draw' ? 'bg-themePrimary text-themeBtnText' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
             title="Draw Mode"
           >
             <Paintbrush size={16} />
           </button>
           <button 
             onClick={() => setInpaintMode('pan')}
-            className={`p-2 rounded-md transition-colors ${inpaintMode === 'pan' ? 'bg-blue-500 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+            className={`p-2 rounded-md transition-colors ${inpaintMode === 'pan' ? 'bg-themePrimary text-white' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
             title="Pan Mode"
           >
             <MousePointer2 size={16} />
@@ -1710,7 +1863,7 @@ export const TagEditor: React.FC = () => {
           <input 
             type="range" min="1" max="200" 
             value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))}
-            className="w-24 accent-pink-500"
+            className="w-24 accent-themePrimary"
             title="Brush Size"
           />
           <input 
@@ -1748,6 +1901,34 @@ export const TagEditor: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-2">Confirm Deletion</h3>
+            <p className="text-zinc-400 mb-6">
+              {deleteConfirm.type === 'model' 
+                ? 'Are you sure you want to delete the downloaded model? It will need to be downloaded again.'
+                : `Are you sure you want to delete ${deleteConfirm.fileName} and its tags? This cannot be undone.`}
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setDeleteConfirm({ isOpen: false, type: 'file' })}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-white/5 hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

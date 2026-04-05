@@ -7,6 +7,13 @@ const DB_NAME = "WDTaggerCache";
 const STORE_NAME = "models";
 
 export const MODELS = {
+  'vit-base-v3': {
+    name: 'ViT Base v3',
+    url: 'https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx',
+    tagsUrl: 'https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/raw/main/selected_tags.csv',
+    size: '346MB',
+    sizeBytes: 346000000
+  },
   'eva02-v3': {
     name: 'EVA02 Large v3',
     url: 'https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx',
@@ -239,7 +246,7 @@ export class WDTagger {
     return float32Data;
   }
 
-  async predict(image: HTMLImageElement, threshold: number = 0.35, characterThreshold: number = 0.85): Promise<string[]> {
+  async predict(image: HTMLImageElement, threshold: number = 0.35, characterThreshold: number = 0.85, excludeCategories: number[] = [], topK: number = 0): Promise<string[]> {
     if (!this.session) throw new Error("Session not initialized");
     
     const inputData = this.preprocessImage(image);
@@ -258,6 +265,8 @@ export class WDTagger {
       const tagInfo = this.tags[i];
       if (!tagInfo) continue;
       
+      if (excludeCategories.includes(tagInfo.category)) continue;
+
       const isCharacter = tagInfo.category === 4;
       const thresh = isCharacter ? characterThreshold : threshold;
       
@@ -266,10 +275,14 @@ export class WDTagger {
       }
     }
     
-    const sortedTags = Object.entries(tags)
+    let sortedTags = Object.entries(tags)
       .sort((a, b) => b[1] - a[1])
       .map(entry => entry[0]);
       
+    if (topK > 0) {
+      sortedTags = sortedTags.slice(0, topK);
+    }
+
     return sortedTags;
   }
 }

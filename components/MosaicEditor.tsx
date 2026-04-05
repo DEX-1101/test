@@ -1181,8 +1181,8 @@ export const MosaicEditor: React.FC = () => {
             ) : (
                 <div className="w-full h-full relative overflow-hidden rounded-xl bg-white/5 border border-white/10 backdrop-blur-md flex flex-col items-center justify-center gap-6">
                     <div className="relative w-40 h-[2px] bg-zinc-800/50 rounded-full overflow-hidden">
-                        <div className="absolute inset-0 bg-blue-500/20 blur-[2px] animate-pulse"></div>
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-transparent w-full h-full -translate-x-full animate-shimmer"></div>
+                        <div className="absolute inset-0 bg-themePrimary/20 blur-[2px] animate-pulse"></div>
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-themePrimary to-transparent w-full h-full -translate-x-full animate-shimmer"></div>
                     </div>
                     <div className="flex flex-col items-center gap-3 text-zinc-400 text-sm font-medium tracking-wide">
                         <ImagePlus size={28} className="opacity-60" />

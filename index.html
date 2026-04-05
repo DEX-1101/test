@@ -21,6 +21,8 @@
               surface: '#18181b',
               primary: '#e4e4e7',
               accent: '#3b82f6',
+              themePrimary: 'var(--theme-primary)',
+              themePrimaryHover: 'var(--theme-primary-hover)',
               themeBtn: 'var(--theme-btn-bg)',
               themeBtnHover: 'var(--theme-btn-hover)',
               themeBtnText: 'var(--theme-btn-text)',
@@ -57,6 +59,8 @@
       }
       
       :root {
+        --theme-primary: #ffffff;
+        --theme-primary-hover: #e4e4e7;
         --theme-btn-bg: #ffffff;
         --theme-btn-hover: #e4e4e7;
         --theme-btn-text: #000000;
@@ -64,6 +68,8 @@
       }
       
       body[data-theme="blue"] {
+        --theme-primary: #3b82f6;
+        --theme-primary-hover: #2563eb;
         --theme-btn-bg: #2563eb;
         --theme-btn-hover: #1d4ed8;
         --theme-btn-text: #ffffff;
@@ -71,6 +77,8 @@
       }
       
       body[data-theme="purple"] {
+        --theme-primary: #a855f7;
+        --theme-primary-hover: #9333ea;
         --theme-btn-bg: #9333ea;
         --theme-btn-hover: #7e22ce;
         --theme-btn-text: #ffffff;
@@ -78,6 +86,8 @@
       }
       
       body[data-theme="red"] {
+        --theme-primary: #ef4444;
+        --theme-primary-hover: #dc2626;
         --theme-btn-bg: #dc2626;
         --theme-btn-hover: #b91c1c;
         --theme-btn-text: #ffffff;
