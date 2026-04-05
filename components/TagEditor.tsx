@@ -1468,7 +1468,7 @@ export const TagEditor: React.FC = () => {
               ) : (
                 <Wand2 size={16} />
               )}
-              {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? 'Tagging...' : wdStatus === 'done' ? 'Done!' : 'Generate Tags'}
+              {wdStatus === 'loading' ? 'Loading Model...' : wdStatus === 'processing' ? `Tagging (${wdTagger.getProvider().toUpperCase()})...` : wdStatus === 'done' ? 'Done!' : 'Generate Tags'}
             </button>
           </div>
 
