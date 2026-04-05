@@ -21,6 +21,10 @@
               surface: '#18181b',
               primary: '#e4e4e7',
               accent: '#3b82f6',
+              themeBtn: 'var(--theme-btn-bg)',
+              themeBtnHover: 'var(--theme-btn-hover)',
+              themeBtnText: 'var(--theme-btn-text)',
+              themeBorder: 'var(--theme-border)',
             },
             animation: {
               'shimmer': 'shimmer 3s ease-in-out infinite',
@@ -51,6 +55,35 @@
         color: #e4e4e7;
         font-family: 'Inter', system-ui, sans-serif;
       }
+      
+      :root {
+        --theme-btn-bg: #ffffff;
+        --theme-btn-hover: #e4e4e7;
+        --theme-btn-text: #000000;
+        --theme-border: rgba(255, 255, 255, 0.1);
+      }
+      
+      body[data-theme="blue"] {
+        --theme-btn-bg: #2563eb;
+        --theme-btn-hover: #1d4ed8;
+        --theme-btn-text: #ffffff;
+        --theme-border: rgba(37, 99, 235, 0.5);
+      }
+      
+      body[data-theme="purple"] {
+        --theme-btn-bg: #9333ea;
+        --theme-btn-hover: #7e22ce;
+        --theme-btn-text: #ffffff;
+        --theme-border: rgba(147, 51, 234, 0.5);
+      }
+      
+      body[data-theme="red"] {
+        --theme-btn-bg: #dc2626;
+        --theme-btn-hover: #b91c1c;
+        --theme-btn-text: #ffffff;
+        --theme-border: rgba(220, 38, 38, 0.5);
+      }
+
       /* Custom scrollbar for headless feel */
       ::-webkit-scrollbar {
         width: 6px;

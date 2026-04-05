@@ -992,6 +992,35 @@ export const TagEditor: React.FC = () => {
     }
   };
 
+  const handleDeleteFile = async (e: React.MouseEvent, idx: number) => {
+    e.stopPropagation();
+    if (isProcessing) return;
+    
+    const file = files[idx];
+    if (confirm(`Are you sure you want to delete ${file.name} and its tags? This cannot be undone.`)) {
+      try {
+        await directoryHandle?.removeEntry(file.name);
+        if (file.textHandle) {
+          await directoryHandle?.removeEntry(file.textHandle.name);
+        }
+        
+        const newFiles = [...files];
+        newFiles.splice(idx, 1);
+        setFiles(newFiles);
+        
+        if (selectedIndex === idx) {
+          setSelectedIndex(-1);
+          setTagState({ current: [], history: [], index: 0 });
+        } else if (selectedIndex > idx) {
+          setSelectedIndex(selectedIndex - 1);
+        }
+      } catch (err) {
+        console.error("Failed to delete file", err);
+        alert("Failed to delete file.");
+      }
+    }
+  };
+
   const commitNewTag = () => {
     if (newTag.trim()) {
       const tagsToAdd = newTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
@@ -1063,12 +1092,20 @@ export const TagEditor: React.FC = () => {
                     index: 0
                   });
                 }}
-                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 ${idx === selectedIndex ? 'border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.5)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
+                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 group ${idx === selectedIndex ? 'border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.5)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
               >
                 <Thumbnail imageHandle={file.imageHandle} name={file.name} urlCache={urlCache} />
                 <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
                   {file.tags.length}
                 </div>
+                <button
+                  onClick={(e) => handleDeleteFile(e, idx)}
+                  disabled={isProcessing}
+                  className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-600/90 text-white rounded-md opacity-0 group-hover:opacity-100 transition-all disabled:opacity-0"
+                  title="Delete image and tags"
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             ))}
           </div>
@@ -1155,7 +1192,7 @@ export const TagEditor: React.FC = () => {
             )}
 
             {/* Overlays Wrapper */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[800px] max-w-[95vw] flex flex-col items-center justify-end z-50 pointer-events-none">
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[960px] max-w-[95vw] flex flex-col items-center justify-end z-50 pointer-events-none">
               
               {/* Global Floating Progress Bar */}
               <div className={`absolute bottom-full mb-4 w-[400px] max-w-[90vw] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-4 pointer-events-auto transition-all duration-300 ease-in-out ${(wdStatus !== 'idle' || batchStatus !== 'idle' || zipStatus !== 'idle') ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}>
@@ -1292,7 +1329,7 @@ export const TagEditor: React.FC = () => {
                     <button 
                       onClick={handleSave}
                       disabled={saveStatus === 'saving' || isProcessing}
-                      className="shrink-0 px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                      className="shrink-0 px-6 py-2 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
                     >
                       {saveStatus === 'saving' ? (
                         <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
@@ -1339,7 +1376,7 @@ export const TagEditor: React.FC = () => {
               <button 
                 onClick={handleSave}
                 disabled={saveStatus === 'saving' || !crop || crop.width === 0 || isProcessing}
-                className="px-6 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                className="px-6 py-2 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
               >
                 {saveStatus === 'saving' ? (
                   <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
@@ -1422,7 +1459,7 @@ export const TagEditor: React.FC = () => {
             <button 
               onClick={handleWdProcess}
               disabled={isProcessing}
-              className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
             >
               {wdStatus === 'loading' || wdStatus === 'processing' ? (
                 <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -1499,7 +1536,7 @@ export const TagEditor: React.FC = () => {
             <button 
               onClick={handleBatchProcess}
               disabled={isProcessing || (!batchActivationTags && !batchEmphasizeTags && !batchRemoveTags && !batchRename)}
-              className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
             >
               {batchStatus === 'processing' ? (
                 <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -1572,7 +1609,7 @@ export const TagEditor: React.FC = () => {
             <button 
               onClick={() => handleCreateZip('download')}
               disabled={isProcessing}
-              className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
+              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-2"
             >
               {zipStatus === 'zipping' ? (
                 <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -1617,7 +1654,7 @@ export const TagEditor: React.FC = () => {
             <button 
               onClick={() => handleCreateZip('upload')}
               disabled={isProcessing || !hfToken || !hfRepo}
-              className="w-full py-2.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
+              className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors mt-auto"
             >
               {zipStatus === 'uploading' || zipStatus === 'zipping' ? (
                 <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -1695,7 +1732,7 @@ export const TagEditor: React.FC = () => {
         <button 
           onClick={handleApplyInpaint}
           disabled={isProcessing}
-          className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-sm font-bold flex items-center gap-2 transition-colors disabled:opacity-50"
+          className="px-4 py-2 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center gap-2 transition-colors disabled:opacity-50"
         >
           <Save size={16} /> Apply
         </button>

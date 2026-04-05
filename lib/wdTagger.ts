@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web';
 
 // Set WASM paths to CDN to avoid Vite bundling issues
-ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/";
+ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
 
 const DB_NAME = "WDTaggerCache";
 const STORE_NAME = "models";
