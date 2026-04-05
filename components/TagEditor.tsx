@@ -153,6 +153,7 @@ export const TagEditor: React.FC = () => {
   const [batchRename, setBatchRename] = useState(() => localStorage.getItem('batch_rename') === 'true');
   const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
   const [batchProgress, setBatchProgress] = useState(0);
+  const [batchProgressText, setBatchProgressText] = useState('');
 
   // WD Tagger State
   const [selectedModelId, setSelectedModelId] = useState(() => localStorage.getItem('wd_modelId') || 'eva02-v3');
@@ -179,9 +180,9 @@ export const TagEditor: React.FC = () => {
 
   // Inpaint State
   const [isInpaintOpen, setIsInpaintOpen] = useState(false);
-  const [brushSize, setBrushSize] = useState(40);
-  const [brushColor, setBrushColor] = useState('#ff0000');
-  const [inpaintMode, setInpaintMode] = useState<'draw' | 'pan'>('draw');
+  const [brushSize, setBrushSize] = useState(() => parseInt(localStorage.getItem('inpaint_brushSize') || '40'));
+  const [brushColor, setBrushColor] = useState(() => localStorage.getItem('inpaint_brushColor') || '#ff0000');
+  const [inpaintMode, setInpaintMode] = useState<'draw' | 'pan'>(() => (localStorage.getItem('inpaint_mode') as 'draw' | 'pan') || 'draw');
   const inpaintCanvasRef = useRef<HTMLCanvasElement>(null);
   const inpaintCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -210,7 +211,10 @@ export const TagEditor: React.FC = () => {
     localStorage.setItem('batch_rename', batchRename.toString());
     localStorage.setItem('hf_token', hfToken);
     localStorage.setItem('hf_repo', hfRepo);
-  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo]);
+    localStorage.setItem('inpaint_brushSize', brushSize.toString());
+    localStorage.setItem('inpaint_brushColor', brushColor);
+    localStorage.setItem('inpaint_mode', inpaintMode);
+  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo, brushSize, brushColor, inpaintMode]);
 
   useEffect(() => {
     checkModelExists(selectedModelId).then(exists => setWdModelExists(exists));
@@ -238,12 +242,12 @@ export const TagEditor: React.FC = () => {
         // Skip if not overwriting and tags already exist
         if (!wdOverwrite && file.tags.length > 0) {
           setWdProgress(Math.round(((i + 1) / totalSteps) * 100));
-          setWdProgressText(`Skipping ${file.name}...`);
+          setWdProgressText(`Skipping ${file.name} (${i + 1}/${totalSteps})...`);
           continue;
         }
 
         setWdProgress(Math.round(((i + 1) / totalSteps) * 100));
-        setWdProgressText(`Tagging ${file.name}...`);
+        setWdProgressText(`Tagging ${file.name} (${i + 1}/${totalSteps})...`);
 
         // Load image to HTMLImageElement
         const imgFile = await file.imageHandle.getFile();
@@ -313,6 +317,7 @@ export const TagEditor: React.FC = () => {
     if (!directoryHandle) return;
     setBatchStatus('processing');
     setBatchProgress(0);
+    setBatchProgressText('Starting batch process...');
 
     try {
       const actTags = cleanAndSplitTags(batchActivationTags);
@@ -362,6 +367,7 @@ export const TagEditor: React.FC = () => {
         
         currentStep++;
         setBatchProgress(Math.round((currentStep / totalSteps) * 100));
+        setBatchProgressText(`Processing ${file.name} (${currentStep}/${totalSteps})...`);
       }
 
       try {
@@ -409,6 +415,7 @@ export const TagEditor: React.FC = () => {
           
           currentStep++;
           setBatchProgress(Math.round((currentStep / totalSteps) * 100));
+          setBatchProgressText(`Renaming ${file.name} (${currentStep}/${totalSteps})...`);
         }
       }
 
@@ -422,9 +429,11 @@ export const TagEditor: React.FC = () => {
       }
       setBatchStatus('done');
       setBatchProgress(100);
+      setBatchProgressText('Batch process complete!');
       setTimeout(() => {
         setBatchStatus('idle');
         setBatchProgress(0);
+        setBatchProgressText('');
       }, 1500);
 
     } catch (err) {
@@ -432,6 +441,7 @@ export const TagEditor: React.FC = () => {
       alert('Failed to process batch.');
       setBatchStatus('idle');
       setBatchProgress(0);
+      setBatchProgressText('');
     }
   };
 
@@ -453,8 +463,8 @@ export const TagEditor: React.FC = () => {
       const totalFiles = files.length;
       for (let i = 0; i < totalFiles; i++) {
         const file = files[i];
-        setZipProgress(Math.round((i / totalFiles) * (action === 'download' ? 100 : 50)));
-        setZipProgressText(`Zipping ${file.name}...`);
+        setZipProgress(Math.round(((i + 1) / totalFiles) * (action === 'download' ? 100 : 50)));
+        setZipProgressText(`Zipping ${file.name} (${i + 1}/${totalFiles})...`);
         
         const imgFile = await file.imageHandle.getFile();
         await zipWriter.add(file.name, new BlobReader(imgFile));
@@ -1152,7 +1162,7 @@ export const TagEditor: React.FC = () => {
                 <div className="flex justify-between text-sm text-white font-medium mb-2">
                   <span>
                     {wdStatus !== 'idle' ? wdProgressText : 
-                     batchStatus !== 'idle' ? 'Processing batch...' : 
+                     batchStatus !== 'idle' ? batchProgressText : 
                      zipProgressText}
                   </span>
                   <span>
