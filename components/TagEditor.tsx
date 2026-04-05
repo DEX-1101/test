@@ -544,6 +544,7 @@ export const TagEditor: React.FC = () => {
 
   const handleCreateZip = async (action: 'download' | 'upload') => {
     if (!directoryHandle) return;
+    cancelRef.current = false;
     setZipStatus(action === 'download' ? 'zipping' : 'uploading');
     setZipProgress(0);
     setZipProgressText('Creating ZIP...');
@@ -571,7 +572,7 @@ export const TagEditor: React.FC = () => {
         await zipWriter.add(file.name, new BlobReader(imgFile));
         
         const tagsStr = file.tags.join(', ');
-        await zipWriter.add(`${file.baseName}.txt`, new TextReader(tagsStr));
+        await zipWriter.add(`${file.baseName.split('/').pop()}.txt`, new TextReader(tagsStr));
         
         // Yield to main thread
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -599,7 +600,12 @@ export const TagEditor: React.FC = () => {
         setZipProgress(100);
         setZipProgressText('Downloaded successfully!');
       } else if (action === 'upload') {
-        if (cancelRef.current) return;
+        if (cancelRef.current) {
+          setZipStatus('idle');
+          setZipProgress(0);
+          setZipProgressText('');
+          return;
+        }
         setZipProgress(50);
         setZipProgressText('Uploading to Hugging Face...');
         
@@ -629,6 +635,8 @@ export const TagEditor: React.FC = () => {
       console.error(err);
       alert(`Failed to ${action} ZIP: ${err instanceof Error ? err.message : String(err)}`);
       setZipStatus('idle');
+      setZipProgress(0);
+      setZipProgressText('');
     }
   };
 
