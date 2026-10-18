@@ -4,14 +4,19 @@ import { ImageUploader } from './components/ImageUploader';
 import { CollageDisplay } from './components/CollageDisplay';
 import { MosaicEditor } from './components/MosaicEditor';
 import { TagEditor } from './components/TagEditor';
+import { UpscaleEditor } from './components/UpscaleEditor';
+import { GifMaker } from './components/GifMaker';
 import { generateCollageLayout, generateBackgroundTexture, detectFaceCenters } from './services/geminiService';
 import { saveMixerState, loadMixerState } from './services/mixerStorage';
 import { ImageItem, CollageLayout, AppStatus, LogEntry, AspectRatio, WatermarkSettings, GlobalBlurSettings } from './types';
-import { AlertCircle, Layers, Grid2X2, Loader2, Tag } from 'lucide-react';
+import { AlertCircle, Layers, Grid2X2, Loader2, Tag, Maximize, Search, Film, UserCircle } from 'lucide-react';
+import { DanbooruSearch } from './components/DanbooruSearch';
+import { PixivSearch } from './components/PixivSearch';
+import { AdetailerEditor } from './components/AdetailerEditor';
 
 const MAX_IMAGES = 6;
 
-type AppMode = 'MIX' | 'MOSAIC' | 'TAGS';
+type AppMode = 'MIX' | 'MOSAIC' | 'TAGS' | 'UPSCALE' | 'DANBOORU_SEARCH' | 'PIXIV_SEARCH' | 'GIF' | 'ADETAILER';
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('MIX');
@@ -47,8 +52,6 @@ const App: React.FC = () => {
       amount: 8
   });
   
-  const [theme, setTheme] = useState<'default'|'blue'|'purple'|'red'>(() => (localStorage.getItem('app_theme') as any) || 'default');
-  
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Persistence: Load
@@ -74,10 +77,21 @@ const App: React.FC = () => {
     });
   }, []);
 
+  const originalTitleRef = useRef(document.title);
   useEffect(() => {
-    document.body.setAttribute('data-theme', theme);
-    localStorage.setItem('app_theme', theme);
-  }, [theme]);
+    if (status === AppStatus.ANALYZING_FACES) {
+      document.title = "Analyzing Faces...";
+    } else if (status === AppStatus.GENERATING_LAYOUT) {
+      document.title = "Generating Layout...";
+    } else if (status === AppStatus.GENERATING_BACKGROUND) {
+      document.title = "Generating Background...";
+    } else {
+      document.title = originalTitleRef.current;
+    }
+    return () => {
+      document.title = originalTitleRef.current;
+    };
+  }, [status]);
 
   // Persistence: Save (Debounced)
   useEffect(() => {
@@ -245,7 +259,7 @@ const App: React.FC = () => {
   const isBusy = status === AppStatus.ANALYZING_FACES || status === AppStatus.GENERATING_LAYOUT || status === AppStatus.GENERATING_BACKGROUND;
 
   return (
-    <div className={`min-h-screen bg-background text-gray-200 flex flex-col items-center p-4 selection:bg-accent selection:text-white ${mode === 'MOSAIC' || mode === 'TAGS' ? 'h-screen overflow-hidden' : ''}`}>
+    <div className={`min-h-screen bg-background text-gray-200 flex flex-col items-center p-4 selection:bg-accent selection:text-white ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'h-screen overflow-hidden' : ''}`}>
       
       {/* --- SPLASH SCREEN --- */}
       <div 
@@ -275,7 +289,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Header / Nav */}
-      <div className={`w-full flex items-center justify-center shrink-0 ${mode === 'MOSAIC' || mode === 'TAGS' ? 'max-w-[95%] mb-4' : 'max-w-6xl mb-8'}`}>
+      <div className={`w-full flex items-center justify-center shrink-0 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'max-w-[95%] mb-4' : 'max-w-6xl mb-8'}`}>
          <div className="flex bg-white/5 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 shadow-2xl">
             <button
                 onClick={() => setMode('MIX')}
@@ -295,86 +309,132 @@ const App: React.FC = () => {
             >
                 <Tag size={16} /> TAG EDITOR
             </button>
-         </div>
-         
-         {/* Theme Switcher */}
-         <div className="ml-4 flex bg-white/5 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 shadow-2xl gap-2">
-            <button onClick={() => setTheme('default')} className={`w-5 h-5 rounded-full bg-white border-2 transition-all ${theme === 'default' ? 'border-zinc-400 scale-110' : 'border-transparent hover:scale-110'}`} title="Default Theme" />
-            <button onClick={() => setTheme('blue')} className={`w-5 h-5 rounded-full bg-blue-600 border-2 transition-all ${theme === 'blue' ? 'border-white scale-110' : 'border-transparent hover:scale-110'}`} title="Blue Theme" />
-            <button onClick={() => setTheme('purple')} className={`w-5 h-5 rounded-full bg-purple-600 border-2 transition-all ${theme === 'purple' ? 'border-white scale-110' : 'border-transparent hover:scale-110'}`} title="Purple Theme" />
-            <button onClick={() => setTheme('red')} className={`w-5 h-5 rounded-full bg-red-600 border-2 transition-all ${theme === 'red' ? 'border-white scale-110' : 'border-transparent hover:scale-110'}`} title="Red Theme" />
+            <button
+                onClick={() => setMode('UPSCALE')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'UPSCALE' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <Maximize size={16} /> UPSCALE
+            </button>
+            <button
+                onClick={() => setMode('GIF')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'GIF' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <Film size={16} /> GIF
+            </button>
+            <button
+                onClick={() => setMode('DANBOORU_SEARCH')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'DANBOORU_SEARCH' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <Search size={16} /> DANBOORU SEARCH
+            </button>
+            <button
+                onClick={() => setMode('PIXIV_SEARCH')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'PIXIV_SEARCH' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <Search size={16} /> PIXIV
+            </button>
+            <button
+                onClick={() => setMode('ADETAILER')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'ADETAILER' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+            >
+                <UserCircle size={16} /> ADETAILER
+            </button>
          </div>
       </div>
 
-      <div className={`w-full flex flex-col gap-6 transition-all duration-500 ${mode === 'MOSAIC' || mode === 'TAGS' ? 'flex-1 h-full max-w-[95%] pb-10' : 'max-w-6xl'}`}>
+      <div className={`w-full flex flex-col gap-6 transition-all duration-500 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' || mode === 'DANBOORU_SEARCH' || mode === 'PIXIV_SEARCH' || mode === 'ADETAILER' ? 'flex-1 h-full max-w-[95%] pb-10' : 'max-w-6xl'}`}>
         
-        {mode === 'MIX' ? (
-            /* MIX MODE */
-            <div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <CollageDisplay 
-                    layout={layout} 
-                    images={images} 
-                    backgroundUrl={backgroundUrl}
-                    showBorders={showBorders}
-                    labelScale={labelScale}
-                    aspectRatio={aspectRatio}
-                    onLayoutUpdate={setLayout}
-                    watermark={watermark}
-                    onWatermarkUpdate={setWatermark}
-                    globalBlur={globalBlur}
-                />
+        {/* MIX MODE */}
+        <div className={`w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'MIX' ? 'block' : 'hidden'}`}>
+            <CollageDisplay 
+                layout={layout} 
+                images={images} 
+                backgroundUrl={backgroundUrl}
+                showBorders={showBorders}
+                labelScale={labelScale}
+                aspectRatio={aspectRatio}
+                onLayoutUpdate={setLayout}
+                watermark={watermark}
+                onWatermarkUpdate={setWatermark}
+                globalBlur={globalBlur}
+            />
 
-                {/* Error Message */}
-                {error && (
-                    <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex gap-3 items-start shadow-lg backdrop-blur-md">
-                        <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                            <h3 className="text-red-400 text-xs font-bold uppercase mb-1 tracking-wider">Generation Interrupted</h3>
-                            <p className="text-red-200/90 text-sm leading-relaxed break-words">
-                                {error}
-                            </p>
-                        </div>
+            {/* Error Message */}
+            {error && (
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex gap-3 items-start shadow-lg backdrop-blur-md">
+                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                        <h3 className="text-red-400 text-xs font-bold uppercase mb-1 tracking-wider">Generation Interrupted</h3>
+                        <p className="text-red-200/90 text-sm leading-relaxed break-words">
+                            {error}
+                        </p>
                     </div>
-                )}
-
-                {/* Unified Inputs & Actions Panel */}
-                <div className="w-full bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-3xl p-6">
-                    <ImageUploader 
-                        images={images} 
-                        onAddImages={handleAddImages} 
-                        onRemoveImage={handleRemoveImage}
-                        onClear={handleClearMix}
-                        maxImages={MAX_IMAGES}
-                        logs={logs}
-                        status={status}
-                        onGenerate={handleMix}
-                        onCancel={handleCancel}
-                        // Visual Props
-                        aspectRatio={aspectRatio}
-                        onAspectRatioChange={setAspectRatio}
-                        showBorders={showBorders}
-                        onToggleBorders={() => setShowBorders(prev => !prev)}
-                        labelScale={labelScale}
-                        onAdjustLabelScale={adjustLabelScale}
-                        isBusy={isBusy}
-                        watermark={watermark}
-                        onWatermarkChange={setWatermark}
-                        globalBlur={globalBlur}
-                        onGlobalBlurChange={setGlobalBlur}
-                    />
                 </div>
+            )}
+
+            {/* Unified Inputs & Actions Panel */}
+            <div className="w-full bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-3xl p-6">
+                <ImageUploader 
+                    images={images} 
+                    onAddImages={handleAddImages} 
+                    onRemoveImage={handleRemoveImage}
+                    onClear={handleClearMix}
+                    maxImages={MAX_IMAGES}
+                    logs={logs}
+                    status={status}
+                    onGenerate={handleMix}
+                    onCancel={handleCancel}
+                    // Visual Props
+                    aspectRatio={aspectRatio}
+                    onAspectRatioChange={setAspectRatio}
+                    showBorders={showBorders}
+                    onToggleBorders={() => setShowBorders(prev => !prev)}
+                    labelScale={labelScale}
+                    onAdjustLabelScale={adjustLabelScale}
+                    isBusy={isBusy}
+                    watermark={watermark}
+                    onWatermarkChange={setWatermark}
+                    globalBlur={globalBlur}
+                    onGlobalBlurChange={setGlobalBlur}
+                />
             </div>
-        ) : mode === 'MOSAIC' ? (
-            /* MOSAIC MODE */
-            <div className="w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <MosaicEditor />
-            </div>
-        ) : (
-            /* TAGS MODE */
-            <div className="w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <TagEditor />
-            </div>
-        )}
+        </div>
+
+        {/* MOSAIC MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'MOSAIC' ? 'block' : 'hidden'}`}>
+            <MosaicEditor />
+        </div>
+
+        {/* TAGS MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'TAGS' ? 'block' : 'hidden'}`}>
+            <TagEditor />
+        </div>
+
+        {/* UPSCALE MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'UPSCALE' ? 'block' : 'hidden'}`}>
+            <UpscaleEditor />
+        </div>
+
+        {/* GIF MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'GIF' ? 'block' : 'hidden'}`}>
+            <GifMaker />
+        </div>
+
+        {/* DANBOORU SEARCH MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'DANBOORU_SEARCH' ? 'block' : 'hidden'}`}>
+            <DanbooruSearch />
+        </div>
+
+        {/* PIXIV SEARCH MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'PIXIV_SEARCH' ? 'block' : 'hidden'}`}>
+            <PixivSearch />
+        </div>
+
+        {/* ADETAILER MODE */}
+        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'ADETAILER' ? 'block' : 'hidden'}`}>
+            <AdetailerEditor />
+        </div>
+
       </div>
     </div>
   );

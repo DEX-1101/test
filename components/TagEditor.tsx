@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2, Archive, Download, UploadCloud, Paintbrush, MousePointer2 } from 'lucide-react';
+import { FolderOpen, Save, X, Image as ImageIcon, Tag, Send, Undo2, Redo2, Crop as CropIcon, Plus, Settings, Wand2, Trash2, Archive, Download, UploadCloud, Paintbrush, MousePointer2, Eye, EyeOff } from 'lucide-react';
 import { 
   DndContext, 
   closestCenter, 
@@ -22,7 +22,7 @@ import ReactCrop, { type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { wdTagger, deleteModelFromDB, checkModelExists } from '../lib/wdTagger';
 import { ZipWriter, BlobWriter, BlobReader, TextReader } from '@zip.js/zip.js';
-import { uploadFile } from '@huggingface/hub';
+import { uploadFilesWithProgress } from '@huggingface/hub';
 
 interface FileEntry {
   imageHandle: FileSystemFileHandle;
@@ -31,14 +31,26 @@ interface FileEntry {
   baseName: string;
   tags: string[];
   parentHandle: FileSystemDirectoryHandle;
+  updateKey?: number;
+  rootFolder: string;
 }
 
-const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFileHandle, name: string, urlCache: React.MutableRefObject<Map<string, string>> }) => {
+const Thumbnail = ({ imageHandle, name, urlCache, updateKey }: { imageHandle: FileSystemFileHandle, name: string, urlCache: React.MutableRefObject<Map<string, string>>, updateKey?: number }) => {
   const [url, setUrl] = useState<string>(urlCache.current.get(name) || '');
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
-    if (url) return;
+    const cached = urlCache.current.get(name);
+    if (cached && cached !== url) {
+      setUrl(cached);
+    }
+  }, [updateKey, name, urlCache, url]);
+
+  useEffect(() => {
+    if (urlCache.current.get(name)) {
+      if (!url) setUrl(urlCache.current.get(name)!);
+      return;
+    }
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting) {
         const cached = urlCache.current.get(name);
@@ -64,7 +76,7 @@ const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFil
     return () => {
       observer.disconnect();
     };
-  }, [imageHandle, name, url, urlCache]);
+  }, [imageHandle, name, urlCache, url]);
 
   return (
     <img 
@@ -76,7 +88,7 @@ const Thumbnail = ({ imageHandle, name, urlCache }: { imageHandle: FileSystemFil
   );
 };
 
-const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => void }) => {
+const SortableTag: React.FC<{ tag: string, onRemove: (t: string) => void }> = ({ tag, onRemove }) => {
   const {
     attributes,
     listeners,
@@ -115,7 +127,8 @@ const SortableTag = ({ tag, onRemove }: { tag: string, onRemove: (t: string) => 
 };
 
 export const TagEditor: React.FC = () => {
-  const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [directoryHandles, setDirectoryHandles] = useState<FileSystemDirectoryHandle[]>([]);
+  const [targetFolder, setTargetFolder] = useState<string>('All Folders');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   
@@ -149,12 +162,31 @@ export const TagEditor: React.FC = () => {
   // Auto Tag & Batch Processing State
   const [isAutoTagModalOpen, setIsAutoTagModalOpen] = useState(false);
   const [batchActivationTags, setBatchActivationTags] = useState(() => localStorage.getItem('batch_activation') || '');
+  const [batchAddTags, setBatchAddTags] = useState(() => localStorage.getItem('batch_add') || '');
   const [batchEmphasizeTags, setBatchEmphasizeTags] = useState(() => localStorage.getItem('batch_emphasize') || '');
   const [batchRemoveTags, setBatchRemoveTags] = useState(() => localStorage.getItem('batch_remove') || '');
   const [batchRename, setBatchRename] = useState(() => localStorage.getItem('batch_rename') === 'true');
   const [batchStatus, setBatchStatus] = useState<'idle' | 'processing' | 'done'>('idle');
   const [batchProgress, setBatchProgress] = useState(0);
   const [batchProgressText, setBatchProgressText] = useState('');
+  const [isTagSummaryOpen, setIsTagSummaryOpen] = useState(false);
+  const [tagSummary, setTagSummary] = useState<{tag: string, count: number}[]>([]);
+
+  useEffect(() => {
+    if (isTagSummaryOpen) {
+      const counts = new Map<string, number>();
+      const filesToSummarize = targetFolder === 'All Folders' ? files : files.filter(f => f.rootFolder === targetFolder);
+      filesToSummarize.forEach(file => {
+        file.tags.forEach(tag => {
+          counts.set(tag, (counts.get(tag) || 0) + 1);
+        });
+      });
+      const sorted = Array.from(counts.entries())
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count);
+      setTagSummary(sorted);
+    }
+  }, [files, isTagSummaryOpen, targetFolder]);
 
   // WD Tagger State
   const [selectedModelId, setSelectedModelId] = useState(() => localStorage.getItem('wd_modelId') || 'eva02-v3');
@@ -165,6 +197,7 @@ export const TagEditor: React.FC = () => {
   const [wdCharThreshold, setWdCharThreshold] = useState(() => parseFloat(localStorage.getItem('wd_charThresh') || '0.85'));
   const [wdOverwrite, setWdOverwrite] = useState(() => localStorage.getItem('wd_overwrite') === 'true');
   const [wdRemoveRedundant, setWdRemoveRedundant] = useState(() => localStorage.getItem('wd_removeRedundant') === 'true');
+  const [wdRemoveUnderscore, setWdRemoveUnderscore] = useState(() => localStorage.getItem('wd_removeUnderscore') === 'true');
   const [wdExcludeCategories, setWdExcludeCategories] = useState<number[]>(() => {
     const saved = localStorage.getItem('wd_excludeCategories');
     return saved ? JSON.parse(saved) : [];
@@ -175,16 +208,21 @@ export const TagEditor: React.FC = () => {
 
   // ZIP State
   const [isZipModalOpen, setIsZipModalOpen] = useState(false);
-  const [zipFilename, setZipFilename] = useState('dataset.zip');
-  const [zipPassword, setZipPassword] = useState('');
-  const [zipLegacy, setZipLegacy] = useState(true);
-  const [zipLevel, setZipLevel] = useState<number>(5);
+  const [zipFilename, setZipFilename] = useState(() => localStorage.getItem('zip_filename') || 'dataset.zip');
+  const [zipPassword, setZipPassword] = useState(() => localStorage.getItem('zip_password') || '');
+  const [showZipPassword, setShowZipPassword] = useState(false);
+  const [zipLegacy, setZipLegacy] = useState(() => localStorage.getItem('zip_legacy') !== 'false');
+  const [zipIncludeFolder, setZipIncludeFolder] = useState(() => localStorage.getItem('zip_include_folder') !== 'false');
+  const [zipLevel, setZipLevel] = useState<number>(() => parseInt(localStorage.getItem('zip_level') || '5'));
   const [hfToken, setHfToken] = useState(() => localStorage.getItem('hf_token') || '');
+  const [showHfToken, setShowHfToken] = useState(false);
   const [hfRepo, setHfRepo] = useState(() => localStorage.getItem('hf_repo') || '');
-  const [hfFolder, setHfFolder] = useState('');
+  const [hfFolder, setHfFolder] = useState(() => localStorage.getItem('hf_folder') || '');
   const [zipStatus, setZipStatus] = useState<'idle' | 'zipping' | 'uploading' | 'done'>('idle');
   const [zipProgress, setZipProgress] = useState(0);
   const [zipProgressText, setZipProgressText] = useState('');
+  const [zipLog, setZipLog] = useState('');
+  const [zipFinalUrl, setZipFinalUrl] = useState('');
 
   // Inpaint State
   const [isInpaintOpen, setIsInpaintOpen] = useState(false);
@@ -256,26 +294,58 @@ export const TagEditor: React.FC = () => {
     localStorage.setItem('wd_charThresh', wdCharThreshold.toString());
     localStorage.setItem('wd_overwrite', wdOverwrite.toString());
     localStorage.setItem('wd_removeRedundant', wdRemoveRedundant.toString());
+    localStorage.setItem('wd_removeUnderscore', wdRemoveUnderscore.toString());
     localStorage.setItem('wd_excludeCategories', JSON.stringify(wdExcludeCategories));
     localStorage.setItem('wd_topK', wdTopK.toString());
     localStorage.setItem('wd_recursive', wdRecursive.toString());
     localStorage.setItem('batch_activation', batchActivationTags);
+    localStorage.setItem('batch_add', batchAddTags);
     localStorage.setItem('batch_emphasize', batchEmphasizeTags);
     localStorage.setItem('batch_remove', batchRemoveTags);
     localStorage.setItem('batch_rename', batchRename.toString());
+    localStorage.setItem('zip_filename', zipFilename);
+    localStorage.setItem('zip_password', zipPassword);
+    localStorage.setItem('zip_legacy', zipLegacy.toString());
+    localStorage.setItem('zip_include_folder', zipIncludeFolder.toString());
+    localStorage.setItem('zip_level', zipLevel.toString());
     localStorage.setItem('hf_token', hfToken);
     localStorage.setItem('hf_repo', hfRepo);
+    localStorage.setItem('hf_folder', hfFolder);
     localStorage.setItem('inpaint_brushSize', brushSize.toString());
     localStorage.setItem('inpaint_brushColor', brushColor);
     localStorage.setItem('inpaint_mode', inpaintMode);
-  }, [selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, wdRemoveRedundant, wdExcludeCategories, wdTopK, batchActivationTags, batchEmphasizeTags, batchRemoveTags, batchRename, hfToken, hfRepo, brushSize, brushColor, inpaintMode]);
+  }, [
+    selectedModelId, wdThreshold, wdCharThreshold, wdOverwrite, wdRemoveRedundant, 
+    wdRemoveUnderscore, wdExcludeCategories, wdTopK, wdRecursive,
+    batchActivationTags, batchAddTags, batchEmphasizeTags, batchRemoveTags, batchRename, 
+    zipFilename, zipPassword, zipLegacy, zipIncludeFolder, zipLevel,
+    hfToken, hfRepo, hfFolder, 
+    brushSize, brushColor, inpaintMode
+  ]);
+
+  const originalTitleRef = useRef(document.title);
+  useEffect(() => {
+    if (wdStatus !== 'idle') {
+      document.title = `[${wdProgress}%] Tagging...`;
+    } else if (batchStatus !== 'idle') {
+      document.title = `[${batchProgress}%] Batch...`;
+    } else if (zipStatus !== 'idle') {
+      document.title = `[${zipProgress}%] Zipping...`;
+    } else {
+      document.title = originalTitleRef.current;
+    }
+
+    return () => {
+      document.title = originalTitleRef.current;
+    };
+  }, [wdStatus, wdProgress, batchStatus, batchProgress, zipStatus, zipProgress]);
 
   useEffect(() => {
     checkModelExists(selectedModelId).then(exists => setWdModelExists(exists));
   }, [isAutoTagModalOpen, selectedModelId]);
 
   const handleWdProcess = async () => {
-    if (!directoryHandle) return;
+    if (directoryHandles.length === 0) return;
     cancelRef.current = false;
     setWdStatus('loading');
     setWdProgress(0);
@@ -289,14 +359,15 @@ export const TagEditor: React.FC = () => {
 
       setWdStatus('processing');
       const updatedFiles = [...files];
-      const totalSteps = updatedFiles.length;
+      const filesToProcess = targetFolder === 'All Folders' ? updatedFiles : updatedFiles.filter(f => f.rootFolder === targetFolder);
+      const totalSteps = filesToProcess.length;
 
-      for (let i = 0; i < updatedFiles.length; i++) {
+      for (let i = 0; i < filesToProcess.length; i++) {
         if (cancelRef.current) {
           setWdProgressText('Cancelled');
           break;
         }
-        const file = updatedFiles[i];
+        const file = filesToProcess[i];
         
         // Skip if not overwriting and tags already exist
         if (!wdOverwrite && file.tags.length > 0) {
@@ -321,6 +392,10 @@ export const TagEditor: React.FC = () => {
         let generatedTags = await wdTagger.predict(img, wdThreshold, wdCharThreshold, wdExcludeCategories, wdTopK);
         URL.revokeObjectURL(imgUrl);
 
+        if (wdRemoveUnderscore) {
+          generatedTags = generatedTags.map(tag => tag.replace(/_/g, ' '));
+        }
+
         // Yield to main thread to prevent freezing
         await new Promise(resolve => setTimeout(resolve, 10));
 
@@ -337,11 +412,11 @@ export const TagEditor: React.FC = () => {
           });
         }
 
-        updatedFiles[i].tags = generatedTags;
+        file.tags = generatedTags;
 
         // @ts-ignore
         const writable = await file.parentHandle.getFileHandle(`${file.baseName.split('/').pop()}.txt`, { create: true }).then(h => {
-          updatedFiles[i].textHandle = h;
+          file.textHandle = h;
           // @ts-ignore
           return h.createWritable();
         });
@@ -391,7 +466,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleBatchProcess = async () => {
-    if (!directoryHandle) return;
+    if (directoryHandles.length === 0) return;
     cancelRef.current = false;
     setBatchStatus('processing');
     setBatchProgress(0);
@@ -399,46 +474,52 @@ export const TagEditor: React.FC = () => {
 
     try {
       const actTags = cleanAndSplitTags(batchActivationTags);
+      const addTags = cleanAndSplitTags(batchAddTags);
       const emphTags = cleanAndSplitTags(batchEmphasizeTags);
       const remTags = cleanAndSplitTags(batchRemoveTags);
 
       let previousActTags: string[] = [];
-      try {
-        const metaHandle = await directoryHandle.getFileHandle('.last_activation_tags.txt');
-        const metaFile = await metaHandle.getFile();
-        const metaText = await metaFile.text();
-        previousActTags = cleanAndSplitTags(metaText);
-      } catch (e) {
-        // Ignore if not found
+      const activeHandles = targetFolder === 'All Folders' ? directoryHandles : directoryHandles.filter(h => h.name === targetFolder);
+      // Try to read .last_activation_tags.txt from the first matched handle
+      if (activeHandles.length > 0) {
+        try {
+          const metaHandle = await activeHandles[0].getFileHandle('.last_activation_tags.txt');
+          const metaFile = await metaHandle.getFile();
+          const metaText = await metaFile.text();
+          previousActTags = cleanAndSplitTags(metaText);
+        } catch (e) {
+          // Ignore if not found
+        }
       }
 
       const tagsToDrop = [...remTags, ...previousActTags];
       const updatedFiles = [...files];
+      const filesToProcess = targetFolder === 'All Folders' ? updatedFiles : updatedFiles.filter(f => f.rootFolder === targetFolder);
       
-      const totalSteps = updatedFiles.length * (batchRename ? 2 : 1);
+      const totalSteps = filesToProcess.length * (batchRename ? 2 : 1);
       let currentStep = 0;
 
-      for (let i = 0; i < updatedFiles.length; i++) {
+      for (let i = 0; i < filesToProcess.length; i++) {
         if (cancelRef.current) {
           setBatchProgressText('Cancelled');
           break;
         }
-        const file = updatedFiles[i];
+        const file = filesToProcess[i];
         let currentTags = [...file.tags];
         const originalTags = [...currentTags];
 
         currentTags = currentTags.filter(t => !tagsToDrop.includes(t));
         const validEmphTags = emphTags.filter(t => originalTags.includes(t));
-        currentTags = currentTags.filter(t => !validEmphTags.includes(t) && !actTags.includes(t));
+        currentTags = currentTags.filter(t => !validEmphTags.includes(t) && !actTags.includes(t) && !addTags.includes(t));
         
-        const finalTags = [...actTags, ...validEmphTags, ...currentTags];
+        const finalTags = [...actTags, ...validEmphTags, ...addTags, ...currentTags];
         const uniqueTags = Array.from(new Set(finalTags));
 
-        updatedFiles[i].tags = uniqueTags;
+        file.tags = uniqueTags;
 
         // @ts-ignore
         const writable = await file.parentHandle.getFileHandle(`${file.baseName.split('/').pop()}.txt`, { create: true }).then(h => {
-          updatedFiles[i].textHandle = h;
+          file.textHandle = h;
           // @ts-ignore
           return h.createWritable();
         });
@@ -453,24 +534,31 @@ export const TagEditor: React.FC = () => {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
 
-      try {
-        const metaHandle = await directoryHandle.getFileHandle('.last_activation_tags.txt', { create: true });
-        // @ts-ignore
-        const writable = await metaHandle.createWritable();
-        await writable.write(batchActivationTags);
-        await writable.close();
-      } catch (e) {
-        console.error("Failed to save meta file", e);
+      // save to .last_activation_tags on each targeted directory
+      if (batchActivationTags) {
+        for (const dirH of activeHandles) {
+          try {
+            const metaHandle = await dirH.getFileHandle('.last_activation_tags.txt', { create: true });
+            // @ts-ignore
+            const writable = await metaHandle.createWritable();
+            await writable.write(batchActivationTags);
+            await writable.close();
+          } catch (e) {
+            console.error("Failed to save meta file", e);
+          }
+        }
       }
 
       if (batchRename && !cancelRef.current) {
-        let counter = 1;
-        for (let i = 0; i < updatedFiles.length; i++) {
+        const counters: Record<string, number> = {};
+        for (let i = 0; i < filesToProcess.length; i++) {
           if (cancelRef.current) {
             setBatchProgressText('Cancelled');
             break;
           }
-          const file = updatedFiles[i];
+          const file = filesToProcess[i];
+          if (!counters[file.rootFolder]) counters[file.rootFolder] = 1;
+          const counter = counters[file.rootFolder];
           const ext = file.name.substring(file.name.lastIndexOf('.'));
           const newImgName = `${counter}${ext}`;
           const newTxtName = `${counter}.txt`;
@@ -483,9 +571,9 @@ export const TagEditor: React.FC = () => {
             await imgWritable.write(imgFile);
             await imgWritable.close();
             await file.parentHandle.removeEntry(file.imageHandle.name);
-            updatedFiles[i].imageHandle = newImgHandle;
-            updatedFiles[i].name = (file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/') + 1) : '') + newImgName;
-            updatedFiles[i].baseName = (file.baseName.includes('/') ? file.baseName.substring(0, file.baseName.lastIndexOf('/') + 1) : '') + `${counter}`;
+            file.imageHandle = newImgHandle;
+            file.name = (file.name.includes('/') ? file.name.substring(0, file.name.lastIndexOf('/') + 1) : '') + newImgName;
+            file.baseName = (file.baseName.includes('/') ? file.baseName.substring(0, file.baseName.lastIndexOf('/') + 1) : '') + `${counter}`;
           }
 
           if (file.textHandle && file.textHandle.name !== newTxtName) {
@@ -496,9 +584,9 @@ export const TagEditor: React.FC = () => {
             await txtWritable.write(txtFile);
             await txtWritable.close();
             await file.parentHandle.removeEntry(file.textHandle.name);
-            updatedFiles[i].textHandle = newTxtHandle;
+            file.textHandle = newTxtHandle;
           }
-          counter++;
+          counters[file.rootFolder]++;
           
           currentStep++;
           setBatchProgress(Math.round((currentStep / totalSteps) * 100));
@@ -543,7 +631,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleCreateZip = async (action: 'download' | 'upload') => {
-    if (!directoryHandle) return;
+    if (directoryHandles.length === 0) return;
     cancelRef.current = false;
     setZipStatus(action === 'download' ? 'zipping' : 'uploading');
     setZipProgress(0);
@@ -568,11 +656,13 @@ export const TagEditor: React.FC = () => {
         setZipProgress(Math.round(((i + 1) / totalFiles) * (action === 'download' ? 100 : 50)));
         setZipProgressText(`Zipping ${file.name} (${i + 1}/${totalFiles})...`);
         
+        const prefix = zipIncludeFolder && directoryHandles.length > 1 ? `${file.rootFolder}/` : '';
+
         const imgFile = await file.imageHandle.getFile();
-        await zipWriter.add(file.name, new BlobReader(imgFile));
+        await zipWriter.add(`${prefix}${file.name}`, new BlobReader(imgFile));
         
         const tagsStr = file.tags.join(', ');
-        await zipWriter.add(`${file.baseName.split('/').pop()}.txt`, new TextReader(tagsStr));
+        await zipWriter.add(`${prefix}${file.baseName.split('/').pop()}.txt`, new TextReader(tagsStr));
         
         // Yield to main thread
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -611,15 +701,49 @@ export const TagEditor: React.FC = () => {
         
         const pathInRepo = hfFolder ? `${hfFolder}/${zipFilename || 'dataset.zip'}` : (zipFilename || 'dataset.zip');
         
-        await uploadFile({
+        setZipLog('Starting upload...');
+        setZipFinalUrl('');
+
+        const uploadGen = uploadFilesWithProgress({
           repo: { type: 'dataset', name: hfRepo },
           credentials: { accessToken: hfToken },
-          file: {
-            path: pathInRepo,
-            content: zipBlob
-          }
+          files: [
+            {
+              path: pathInRepo,
+              content: zipBlob
+            }
+          ],
+          commitTitle: `Upload ${zipFilename || 'dataset.zip'}`
         });
+
+        let res = await uploadGen.next();
+        while (!res.done) {
+          if (cancelRef.current) {
+            setZipStatus('idle');
+            setZipProgress(0);
+            setZipProgressText('');
+            return;
+          }
+          const event = res.value as any;
+          if (event && event.event === 'phase') {
+            setZipLog(`Phase: ${event.phase}...`);
+          } else if (event && event.event === 'fileProgress') {
+            const prog = Math.round(event.progress * 100);
+            setZipLog(`Uploading (${prog}%)...`);
+            setZipProgress(50 + (prog / 2));
+            setZipProgressText(`Uploading to HF (${prog}%)`);
+          }
+          res = await uploadGen.next();
+        }
         
+        if (res.value?.commit?.url || res.done) {
+          const directUrl = `https://huggingface.co/datasets/${hfRepo}/resolve/main/${pathInRepo}`;
+          setZipFinalUrl(directUrl);
+          setZipLog('Upload complete.');
+        } else {
+          setZipLog('Upload complete (URL not provided).');
+        }
+
         setZipStatus('done');
         setZipProgress(100);
         setZipProgressText('Uploaded successfully!');
@@ -629,6 +753,7 @@ export const TagEditor: React.FC = () => {
         setZipStatus('idle');
         setZipProgress(0);
         setZipProgressText('');
+        // do not reset log and URL so user can copy it
       }, 3000);
 
     } catch (err) {
@@ -773,7 +898,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleApplyInpaint = async () => {
-    if (!inpaintCanvasRef.current || !directoryHandle || selectedIndex === -1) return;
+    if (!inpaintCanvasRef.current || directoryHandles.length === 0 || selectedIndex === -1) return;
     
     const canvas = inpaintCanvasRef.current;
     canvas.toBlob(async (blob) => {
@@ -787,8 +912,21 @@ export const TagEditor: React.FC = () => {
         await writable.close();
         
         const newUrl = URL.createObjectURL(blob);
-        urlCache.current.set(fileEntry.name, newUrl);
+        urlCache.current.set(`${fileEntry.rootFolder}/${fileEntry.name}`, newUrl);
         setPreviewUrl(newUrl);
+
+        setImageState(prev => {
+          const newHistory = prev.history.slice(0, prev.index + 1);
+          newHistory.push(newUrl);
+          return { history: newHistory, index: newHistory.length - 1 };
+        });
+
+        setFiles(prev => {
+          const newFiles = [...prev];
+          const prevKey = newFiles[selectedIndex].updateKey || 0;
+          newFiles[selectedIndex] = { ...newFiles[selectedIndex], updateKey: prevKey + 1 };
+          return newFiles;
+        });
         
         setIsInpaintOpen(false);
       } catch (err) {
@@ -862,7 +1000,7 @@ export const TagEditor: React.FC = () => {
   const currentImageHandle = files[selectedIndex]?.imageHandle;
   useEffect(() => {
     if (currentImageHandle) {
-      const name = currentImageHandle.name;
+      const name = `${files[selectedIndex].rootFolder}/${currentImageHandle.name}`;
       const cached = urlCache.current.get(name);
       
       const isNewImage = lastLoadedIndex.current !== selectedIndex;
@@ -895,7 +1033,7 @@ export const TagEditor: React.FC = () => {
       setImageState({ history: [], index: 0 });
       lastLoadedIndex.current = -1;
     }
-  }, [currentImageHandle, selectedIndex]);
+  }, [currentImageHandle, selectedIndex, files]);
 
   // Preload adjacent images for instant switching
   useEffect(() => {
@@ -904,7 +1042,7 @@ export const TagEditor: React.FC = () => {
     const preloadIndex = async (idx: number) => {
       if (idx >= 0 && idx < files.length) {
         const handle = files[idx].imageHandle;
-        const name = handle.name;
+        const name = `${files[idx].rootFolder}/${files[idx].name}`;
         if (!urlCache.current.has(name)) {
           try {
             const file = await handle.getFile();
@@ -922,25 +1060,34 @@ export const TagEditor: React.FC = () => {
     preloadIndex(selectedIndex - 1);
   }, [selectedIndex, files]);
 
-  const handleOpenFolder = async () => {
+  const handleAddFolder = async () => {
     try {
       // @ts-ignore - File System Access API
       const dirHandle = await window.showDirectoryPicker({
         mode: 'readwrite'
       });
       
-      // Clear cache when opening a new folder
-      urlCache.current.forEach(url => URL.revokeObjectURL(url));
-      urlCache.current.clear();
+      setDirectoryHandles(prev => {
+        if (prev.some(h => h.name === dirHandle.name)) return prev;
+        return [...prev, dirHandle];
+      });
       
-      setDirectoryHandle(dirHandle);
-      await loadFiles(dirHandle, wdRecursive);
+      await loadFiles(dirHandle, wdRecursive, true);
     } catch (err) {
       console.error(err);
     }
   };
 
-  const loadFiles = async (dirHandle: FileSystemDirectoryHandle, isRecursive: boolean) => {
+  const handleClearAll = () => {
+    urlCache.current.forEach(url => URL.revokeObjectURL(url));
+    urlCache.current.clear();
+    setDirectoryHandles([]);
+    setFiles([]);
+    setSelectedIndex(-1);
+    setTagState({ current: [], history: [[]], index: 0 });
+  };
+
+  const loadFiles = async (dirHandle: FileSystemDirectoryHandle, isRecursive: boolean, append: boolean = false) => {
     const fileList: FileEntry[] = [];
 
     async function scan(handle: FileSystemDirectoryHandle, relativePath: string = '') {
@@ -962,7 +1109,8 @@ export const TagEditor: React.FC = () => {
           name: relativePath + imgHandle.name,
           baseName: relativePath + baseName,
           tags: [],
-          parentHandle: handle
+          parentHandle: handle,
+          rootFolder: dirHandle.name
         });
       }
 
@@ -989,15 +1137,18 @@ export const TagEditor: React.FC = () => {
       }
     }));
 
-    setFiles(fileList);
-    if (fileList.length > 0) {
-      setSelectedIndex(0);
-      setTagState({
-        current: fileList[0].tags,
-        history: [fileList[0].tags],
-        index: 0
-      });
-    }
+    setFiles(prev => {
+      const newFiles = append ? [...prev.filter(f => f.rootFolder !== dirHandle.name), ...fileList] : fileList;
+      if (newFiles.length > 0 && (!append || prev.length === 0)) {
+        setSelectedIndex(0);
+        setTagState({
+          current: newFiles[0].tags,
+          history: [newFiles[0].tags],
+          index: 0
+        });
+      }
+      return newFiles;
+    });
   };
 
   const getCroppedImg = async (image: HTMLImageElement, crop: Crop): Promise<Blob | null> => {
@@ -1030,7 +1181,7 @@ export const TagEditor: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (selectedIndex === -1 || !directoryHandle) return;
+    if (selectedIndex === -1 || directoryHandles.length === 0) return;
     setSaveStatus('saving');
     try {
       const currentFile = files[selectedIndex];
@@ -1057,7 +1208,7 @@ export const TagEditor: React.FC = () => {
           
           // Update preview URL to reflect new crop
           const newObjectUrl = URL.createObjectURL(croppedBlob);
-          urlCache.current.set(currentFile.name, newObjectUrl);
+          urlCache.current.set(`${currentFile.rootFolder}/${currentFile.name}`, newObjectUrl);
           setPreviewUrl(newObjectUrl);
           
           setImageState(prev => {
@@ -1073,7 +1224,8 @@ export const TagEditor: React.FC = () => {
       // Update state to reflect that it now has a text handle and updated tags
       setFiles(prev => {
         const newFiles = [...prev];
-        newFiles[selectedIndex] = { ...newFiles[selectedIndex], textHandle: txtHandle, tags: activeTags };
+        const prevKey = newFiles[selectedIndex].updateKey || 0;
+        newFiles[selectedIndex] = { ...newFiles[selectedIndex], textHandle: txtHandle, tags: activeTags, updateKey: prevKey + 1 };
         return newFiles;
       });
       
@@ -1092,7 +1244,7 @@ export const TagEditor: React.FC = () => {
       const previousUrl = imageState.history[newIndex];
       setImageState(prev => ({ ...prev, index: newIndex }));
       setPreviewUrl(previousUrl);
-      urlCache.current.set(files[selectedIndex].name, previousUrl);
+      urlCache.current.set(`${files[selectedIndex].rootFolder}/${files[selectedIndex].name}`, previousUrl);
       
       try {
         const response = await fetch(previousUrl);
@@ -1101,6 +1253,13 @@ export const TagEditor: React.FC = () => {
         const writableImg = await files[selectedIndex].imageHandle.createWritable();
         await writableImg.write(blob);
         await writableImg.close();
+
+        setFiles(prev => {
+          const newFiles = [...prev];
+          const prevKey = newFiles[selectedIndex].updateKey || 0;
+          newFiles[selectedIndex] = { ...newFiles[selectedIndex], updateKey: prevKey + 1 };
+          return newFiles;
+        });
       } catch (e) {
         console.error("Failed to write undo crop to disk", e);
       }
@@ -1113,7 +1272,7 @@ export const TagEditor: React.FC = () => {
       const nextUrl = imageState.history[newIndex];
       setImageState(prev => ({ ...prev, index: newIndex }));
       setPreviewUrl(nextUrl);
-      urlCache.current.set(files[selectedIndex].name, nextUrl);
+      urlCache.current.set(`${files[selectedIndex].rootFolder}/${files[selectedIndex].name}`, nextUrl);
       
       try {
         const response = await fetch(nextUrl);
@@ -1122,6 +1281,13 @@ export const TagEditor: React.FC = () => {
         const writableImg = await files[selectedIndex].imageHandle.createWritable();
         await writableImg.write(blob);
         await writableImg.close();
+
+        setFiles(prev => {
+          const newFiles = [...prev];
+          const prevKey = newFiles[selectedIndex].updateKey || 0;
+          newFiles[selectedIndex] = { ...newFiles[selectedIndex], updateKey: prevKey + 1 };
+          return newFiles;
+        });
       } catch (e) {
         console.error("Failed to write redo crop to disk", e);
       }
@@ -1194,46 +1360,74 @@ export const TagEditor: React.FC = () => {
               Recursive Scan
             </label>
           </div>
-          <button 
-            onClick={handleOpenFolder}
-            disabled={isProcessing}
-            className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border border-white/10 disabled:opacity-50"
-          >
-            <FolderOpen size={16} />
-            Open Folder
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleAddFolder}
+              disabled={isProcessing}
+              className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white py-2 px-3 rounded-lg transition-colors font-medium text-sm border border-white/10 disabled:opacity-50"
+              title="Add Folder"
+            >
+              <FolderOpen size={16} />
+              <span className="hidden xl:inline">Add</span>
+            </button>
+            <button 
+              onClick={handleClearAll}
+              disabled={isProcessing || files.length === 0}
+              className="px-3 flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 py-2 rounded-lg transition-colors font-medium text-sm border border-red-500/10 disabled:opacity-50"
+              title="Clear All"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-          <div className="grid grid-cols-3 gap-2">
-            {files.map((file, idx) => (
-              <div 
-                key={file.name}
-                onClick={() => {
-                  if (isProcessing) return;
-                  setSelectedIndex(idx);
-                  setTagState({
-                    current: file.tags,
-                    history: [file.tags],
-                    index: 0
-                  });
-                }}
-                className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 group ${idx === selectedIndex ? 'border-themePrimary shadow-[0_0_20px_var(--theme-primary-hover)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
-              >
-                <Thumbnail imageHandle={file.imageHandle} name={file.name} urlCache={urlCache} />
-                <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
-                  {file.tags.length}
-                </div>
-                <button
-                  onClick={(e) => handleDeleteFile(e, idx)}
-                  disabled={isProcessing}
-                  className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-600/90 text-white rounded-md opacity-0 group-hover:opacity-100 transition-all disabled:opacity-0"
-                  title="Delete image and tags"
-                >
-                  <Trash2 size={12} />
-                </button>
+          {(Object.entries(
+            files.reduce((acc, file) => {
+              if (!acc[file.rootFolder]) acc[file.rootFolder] = [];
+              acc[file.rootFolder].push(file);
+              return acc;
+            }, {} as Record<string, any[]>)
+          ) as [string, any[]][]).map(([folder, folderFiles]) => (
+            <div key={folder} className="mb-4 last:mb-0">
+              <div className="text-[10px] font-bold text-zinc-500 mb-2 px-1 uppercase tracking-wider flex items-center justify-between">
+                <span className="truncate pr-2">{folder}</span>
+                <span className="shrink-0 font-mono bg-white/5 px-1.5 py-0.5 rounded">{folderFiles.length}</span>
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-3 gap-2">
+                {folderFiles.map((file) => {
+                  const idx = files.indexOf(file);
+                  return (
+                    <div 
+                      key={file.name}
+                      onClick={() => {
+                        if (isProcessing) return;
+                        setSelectedIndex(idx);
+                        setTagState({
+                          current: file.tags,
+                          history: [file.tags],
+                          index: 0
+                        });
+                      }}
+                      className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all duration-150 group ${idx === selectedIndex ? 'border-themePrimary shadow-[0_0_20px_var(--theme-primary-hover)] z-10 scale-105 brightness-110' : 'border-transparent hover:border-white/30 opacity-60 hover:opacity-100'}`}
+                    >
+                      <Thumbnail imageHandle={file.imageHandle} name={`${file.rootFolder}/${file.name}`} urlCache={urlCache} updateKey={file.updateKey} />
+                      <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm text-[10px] px-1.5 py-0.5 rounded text-white font-medium border border-white/10">
+                        {file.tags.length}
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteFile(e, idx)}
+                        disabled={isProcessing}
+                        className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-600/90 text-white rounded-md opacity-0 group-hover:opacity-100 transition-all disabled:opacity-0"
+                        title="Delete image and tags"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           {files.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-zinc-500 gap-3 opacity-50">
               <ImageIcon size={48} strokeWidth={1} />
@@ -1518,7 +1712,21 @@ export const TagEditor: React.FC = () => {
           <X size={18} />
         </button>
         
-        <div className="p-6 pt-8 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1 relative">
+        <div className="px-6 pt-6 pb-2 border-b border-white/10 flex items-center gap-4">
+          <label className="text-sm font-medium text-zinc-300">Target Folder:</label>
+          <select 
+            value={targetFolder} 
+            onChange={e => setTargetFolder(e.target.value)} 
+            className="w-[250px] bg-black/50 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/30"
+          >
+            <option value="All Folders">All Folders</option>
+            {directoryHandles.map(h => (
+              <option key={h.name} value={h.name}>{h.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="p-6 grid grid-cols-2 gap-6 overflow-y-auto custom-scrollbar flex-1 relative">
           {/* Left Column: Tag Generation */}
           <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
@@ -1538,10 +1746,11 @@ export const TagEditor: React.FC = () => {
                 <option value="eva02-v3">EVA02 Large v3 (~1.2GB)</option>
                 <option value="vit-v3">ViT Large v3 (~1.2GB)</option>
                 <option value="swinv2-v2">SwinV2 v2 (~1.1GB)</option>
+                <option value="convnextv2-huge">ConvNeXtV2 Huge (~2.7GB)</option>
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-zinc-300 flex justify-between">
                   <span>General Thresh</span>
@@ -1564,18 +1773,27 @@ export const TagEditor: React.FC = () => {
                   className="w-full accent-themePrimary"
                 />
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-zinc-300 flex justify-between">
-                <span>Limit by Maximum Number (Top-K)</span>
-                <span className="text-zinc-500">{wdTopK === 0 ? 'No Limit' : wdTopK}</span>
-              </label>
-              <input 
-                type="range" min="0" max="100" step="1"
-                value={wdTopK} onChange={e => setWdTopK(parseInt(e.target.value))}
-                className="w-full accent-themePrimary"
-              />
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-zinc-300 flex justify-between">
+                  <span>Maximum Tag</span>
+                  <span className="text-zinc-500">{wdTopK === 0 ? 'No Limit' : wdTopK}</span>
+                </label>
+                <input 
+                  type="range" min="0" max="100" step="1"
+                  value={wdTopK} onChange={e => setWdTopK(parseInt(e.target.value))}
+                  className="w-full accent-themePrimary"
+                />
+              </div>
+              <div className="flex items-center gap-2.5 p-2 bg-white/5 rounded-lg border border-white/5 h-[46px] self-end">
+                <input 
+                  type="checkbox" id="wdRemoveUnderscore"
+                  checked={wdRemoveUnderscore} onChange={e => setWdRemoveUnderscore(e.target.checked)}
+                  className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0"
+                />
+                <label htmlFor="wdRemoveUnderscore" className="text-xs font-medium text-zinc-300 cursor-pointer select-none leading-tight">
+                  Remove Underscore
+                </label>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1680,6 +1898,22 @@ export const TagEditor: React.FC = () => {
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Custom Tags to Add</label>
+              <div className="relative flex items-center">
+                <input 
+                  type="text" value={batchAddTags} onChange={e => setBatchAddTags(e.target.value)}
+                  placeholder="e.g., 1girl, outdoors"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-8 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                {batchAddTags && (
+                  <button onClick={() => setBatchAddTags('')} className="absolute right-2 p-1 text-zinc-400 hover:text-white transition-colors">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Tags to Remove</label>
               <div className="relative flex items-center">
                 <input 
@@ -1695,6 +1929,33 @@ export const TagEditor: React.FC = () => {
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <button 
+                onClick={() => setIsTagSummaryOpen(!isTagSummaryOpen)}
+                className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium text-zinc-300 transition-colors flex items-center justify-center gap-2"
+              >
+                <Tag size={14} />
+                {isTagSummaryOpen ? 'Hide Tag Summary' : 'Show Tag Summary'}
+              </button>
+              
+              {isTagSummaryOpen && (
+                <div className="bg-black/50 border border-white/10 rounded-lg p-3 max-h-48 overflow-y-auto custom-scrollbar">
+                  {tagSummary.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {tagSummary.map(({ tag, count }) => (
+                        <div key={tag} className="flex items-center bg-white/5 border border-white/10 rounded px-2 py-1 text-xs">
+                          <span className="text-white">{tag}</span>
+                          <span className="text-zinc-500 ml-1.5 font-mono">({count})</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500 text-center py-2">No tags found in the current dataset.</p>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5 mt-auto">
               <input 
                 type="checkbox" id="renameSeq"
@@ -1708,7 +1969,7 @@ export const TagEditor: React.FC = () => {
 
             <button 
               onClick={handleBatchProcess}
-              disabled={isProcessing || (!batchActivationTags && !batchEmphasizeTags && !batchRemoveTags && !batchRename)}
+              disabled={isProcessing || (!batchActivationTags && !batchEmphasizeTags && !batchRemoveTags && !batchAddTags && !batchRename)}
               className="w-full py-2.5 rounded-lg bg-themeBtn hover:bg-themeBtnHover text-themeBtnText border border-themeBorder text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
             >
               {batchStatus === 'processing' ? (
@@ -1748,11 +2009,19 @@ export const TagEditor: React.FC = () => {
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Password (Optional)</label>
-              <input 
-                type="password" value={zipPassword} onChange={e => setZipPassword(e.target.value)}
-                placeholder="Leave blank for no password"
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-              />
+              <div className="relative flex items-center">
+                <input 
+                  type={showZipPassword ? "text" : "password"} value={zipPassword} onChange={e => setZipPassword(e.target.value)}
+                  placeholder="Leave blank for no password"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-10 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                <button 
+                  onClick={() => setShowZipPassword(!showZipPassword)} 
+                  className="absolute right-2 p-1.5 text-zinc-400 hover:text-white transition-colors"
+                >
+                  {showZipPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5">
@@ -1764,6 +2033,18 @@ export const TagEditor: React.FC = () => {
               />
               <label htmlFor="zipLegacy" className={`text-sm font-medium cursor-pointer select-none leading-tight ${!zipPassword ? 'text-zinc-500' : 'text-zinc-300'}`}>
                 Use Legacy Encryption (ZipCrypto)
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/5">
+              <input 
+                type="checkbox" id="zipIncludeFolder"
+                checked={zipIncludeFolder} onChange={e => setZipIncludeFolder(e.target.checked)}
+                disabled={directoryHandles.length <= 1}
+                className="w-4 h-4 rounded border-white/20 bg-black/50 text-themePrimary focus:ring-themePrimary/50 focus:ring-offset-0 disabled:opacity-50"
+              />
+              <label htmlFor="zipIncludeFolder" className={`text-sm font-medium cursor-pointer select-none leading-tight ${directoryHandles.length <= 1 ? 'text-zinc-500' : 'text-zinc-300'}`}>
+                Preserve Root Folders ({directoryHandles.length} loaded)
               </label>
             </div>
 
@@ -1802,11 +2083,19 @@ export const TagEditor: React.FC = () => {
           <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-300">Access Token (Write)</label>
-              <input 
-                type="password" value={hfToken} onChange={e => setHfToken(e.target.value)}
-                placeholder="hf_..."
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
-              />
+              <div className="relative flex items-center">
+                <input 
+                  type={showHfToken ? "text" : "password"} value={hfToken} onChange={e => setHfToken(e.target.value)}
+                  placeholder="hf_..."
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 pr-10 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
+                />
+                <button 
+                  onClick={() => setShowHfToken(!showHfToken)} 
+                  className="absolute right-2 p-1.5 text-zinc-400 hover:text-white transition-colors"
+                >
+                  {showHfToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -1826,6 +2115,22 @@ export const TagEditor: React.FC = () => {
                 className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/30"
               />
             </div>
+
+            {zipLog && (
+              <div className="space-y-1.5 mt-2">
+                <label className="text-sm font-medium text-zinc-300">Upload Log</label>
+                <div className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-400 font-mono break-words whitespace-pre-wrap">
+                  {zipLog}
+                  {zipFinalUrl && (
+                    <div className="mt-2 text-themePrimary">
+                      <a href={zipFinalUrl} target="_blank" rel="noopener noreferrer" className="hover:underline break-all">
+                        {zipFinalUrl}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {zipStatus === 'uploading' || (zipStatus === 'zipping' && hfToken) ? (
               <button 

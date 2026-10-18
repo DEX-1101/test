@@ -34,6 +34,15 @@ export const MODELS = {
     tagsUrl: 'https://huggingface.co/SmilingWolf/wd-v1-4-swinv2-tagger-v2/raw/main/selected_tags.csv',
     size: '1.1GB',
     sizeBytes: 1100000000
+  },
+  'convnextv2-huge': {
+    name: 'ConvNeXtV2 Huge',
+    url: 'https://huggingface.co/itterative/convnextv2_huge.dbv4-full-onnx/resolve/main/model.onnx',
+    tagsUrl: 'https://huggingface.co/itterative/convnextv2_huge.dbv4-full-onnx/raw/main/selected_tags.csv',
+    size: '2.7GB',
+    sizeBytes: 2770470128,
+    useUrlDirectly: true,
+    externalDataUrl: 'https://huggingface.co/itterative/convnextv2_huge.dbv4-full-onnx/resolve/main/model.onnx_data'
   }
 };
 
@@ -90,7 +99,7 @@ async function saveModelToDB(modelId: string, buffer: ArrayBuffer): Promise<void
 export async function deleteModelFromDB(modelId: string): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const request = store.delete(`model_${modelId}.onnx`);
@@ -100,11 +109,47 @@ export async function deleteModelFromDB(modelId: string): Promise<void> {
   } catch (e) {
     console.warn("Failed to delete model from IndexedDB", e);
   }
+
+  try {
+    const cache = await caches.open('wd-models-cache-v1');
+    const modelInfo = MODELS[modelId as keyof typeof MODELS];
+    if (modelInfo) {
+      await cache.delete(modelInfo.url);
+      // @ts-ignore
+      if (modelInfo.externalDataUrl) {
+        // @ts-ignore
+        await cache.delete(modelInfo.externalDataUrl);
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to delete model from Cache API", e);
+  }
 }
 
 export async function checkModelExists(modelId: string): Promise<boolean> {
-  const model = await getModelFromDB(modelId);
-  return model !== null;
+  const modelInfo = MODELS[modelId as keyof typeof MODELS];
+  if (!modelInfo) return false;
+  
+  // @ts-ignore
+  if (modelInfo.useUrlDirectly) {
+    try {
+      const cache = await caches.open('wd-models-cache-v1');
+      const hasMain = await cache.match(modelInfo.url);
+      if (!hasMain) return false;
+      // @ts-ignore
+      if (modelInfo.externalDataUrl) {
+        // @ts-ignore
+        const hasExternal = await cache.match(modelInfo.externalDataUrl);
+        return !!hasExternal;
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  } else {
+    const model = await getModelFromDB(modelId);
+    return model !== null;
+  }
 }
 
 export class WDTagger {
@@ -139,67 +184,145 @@ export class WDTagger {
     }
 
     if (onProgress) onProgress(0, 'Checking cache...');
-    let modelBuffer = await getModelFromDB(modelId);
     
-    if (!modelBuffer) {
-      if (onProgress) onProgress(0, `Downloading model (${modelInfo.size})...`);
-      const response = await fetch(modelInfo.url);
-      if (!response.ok) throw new Error(`Failed to fetch model: ${response.statusText}`);
+    // @ts-ignore
+    const useUrlDirectly = modelInfo.useUrlDirectly;
+    let modelSource: string | ArrayBuffer = modelInfo.url;
+    
+    if (!useUrlDirectly) {
+      let modelBuffer = await getModelFromDB(modelId);
       
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : modelInfo.sizeBytes;
-      let loaded = 0;
-      
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("Failed to get reader");
-      
-      const chunks: Uint8Array[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          loaded += value.length;
-          if (onProgress) {
-            onProgress(Math.round((loaded / total) * 100), `Downloading model (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)...`);
+      if (!modelBuffer) {
+        if (onProgress) onProgress(0, `Downloading model (${modelInfo.size})...`);
+        const response = await fetch(modelInfo.url);
+        if (!response.ok) throw new Error(`Failed to fetch model: ${response.statusText}`);
+        
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : modelInfo.sizeBytes;
+        let loaded = 0;
+        
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Failed to get reader");
+        
+        const chunks: Uint8Array[] = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            loaded += value.length;
+            if (onProgress) {
+              onProgress(Math.round((loaded / total) * 100), `Downloading model (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)...`);
+            }
           }
         }
+        
+        if (onProgress) onProgress(100, 'Processing model buffer...');
+        const buffer = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          buffer.set(chunk, offset);
+          offset += chunk.length;
+        }
+        modelBuffer = buffer.buffer;
+        
+        if (onProgress) onProgress(100, 'Saving to cache...');
+        await saveModelToDB(modelId, modelBuffer);
+      } else {
+        if (onProgress) onProgress(100, 'Model loaded from cache.');
       }
-      
-      if (onProgress) onProgress(100, 'Processing model buffer...');
-      const buffer = new Uint8Array(loaded);
-      let offset = 0;
-      for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
-      }
-      modelBuffer = buffer.buffer;
-      
-      if (onProgress) onProgress(100, 'Saving to cache...');
-      await saveModelToDB(modelId, modelBuffer);
+      modelSource = modelBuffer;
     } else {
-      if (onProgress) onProgress(100, 'Model loaded from cache.');
+      const fetchAndCache = async (url: string, label: string, sizeBytes: number) => {
+        let cache: Cache | undefined;
+        try { cache = await caches.open('wd-models-cache-v1'); } catch (e) {}
+
+        if (cache) {
+          const cachedResponse = await cache.match(url);
+          if (cachedResponse) {
+            if (onProgress) onProgress(100, `Loaded ${label} from cache.`);
+            const blob = await cachedResponse.blob();
+            return URL.createObjectURL(blob);
+          }
+        }
+
+        if (onProgress) onProgress(0, `Downloading ${label}...`);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch ${label}: ${response.statusText}`);
+
+        const total = sizeBytes || 0;
+        let loaded = 0;
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error(`Failed to get reader for ${label}`);
+
+        const stream = new ReadableStream({
+          async pull(controller) {
+            const { done, value } = await reader.read();
+            if (done) {
+              controller.close();
+              return;
+            }
+            loaded += value.length;
+            if (total && onProgress) {
+              onProgress(Math.round((loaded / total) * 100), `Downloading ${label} (${Math.round(loaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB)...`);
+            }
+            controller.enqueue(value);
+          }
+        });
+
+        const streamResponse = new Response(stream, { headers: response.headers });
+        
+        if (cache) {
+          await cache.put(url, streamResponse);
+          const cachedResponse = await cache.match(url);
+          const blob = await cachedResponse!.blob();
+          return URL.createObjectURL(blob);
+        } else {
+          const blob = await streamResponse.blob();
+          return URL.createObjectURL(blob);
+        }
+      };
+
+      // @ts-ignore
+      modelSource = await fetchAndCache(modelInfo.url, 'model.onnx', 324944); // 324KB for onnx
+
+      // @ts-ignore
+      if (modelInfo.externalDataUrl) {
+        // @ts-ignore
+        modelInfo.localExternalDataUrl = await fetchAndCache(modelInfo.externalDataUrl, 'model.onnx_data', modelInfo.sizeBytes);
+      }
     }
 
     if (onProgress) onProgress(100, 'Initializing ONNX session...');
     
+    const sessionOptions: ort.InferenceSession.SessionOptions = {
+      executionProviders: ['webgpu']
+    };
+    
+    // @ts-ignore
+    if (modelInfo.localExternalDataUrl) {
+      sessionOptions.externalData = [
+        {
+          path: 'model.onnx_data',
+          // @ts-ignore
+          data: modelInfo.localExternalDataUrl
+        }
+      ];
+    }
+    
     try {
-      this.session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: ['webgpu']
-      });
+      this.session = await ort.InferenceSession.create(modelSource, sessionOptions);
       this.currentProvider = 'webgpu';
     } catch (e) {
       console.warn("WebGPU failed, trying WebGL", e);
       try {
-        this.session = await ort.InferenceSession.create(modelBuffer, {
-          executionProviders: ['webgl']
-        });
+        sessionOptions.executionProviders = ['webgl'];
+        this.session = await ort.InferenceSession.create(modelSource, sessionOptions);
         this.currentProvider = 'webgl';
       } catch (e2) {
         console.warn("WebGL failed, falling back to WASM", e2);
-        this.session = await ort.InferenceSession.create(modelBuffer, {
-          executionProviders: ['wasm']
-        });
+        sessionOptions.executionProviders = ['wasm'];
+        this.session = await ort.InferenceSession.create(modelSource, sessionOptions);
         this.currentProvider = 'wasm';
       }
     }
@@ -209,7 +332,9 @@ export class WDTagger {
   }
 
   preprocessImage(image: HTMLImageElement): Float32Array {
-    const targetSize = 448;
+    const isConvNextV2Huge = this.currentModelId === 'convnextv2-huge';
+    const targetSize = isConvNextV2Huge ? 512 : 448;
+    
     const canvas = document.createElement('canvas');
     canvas.width = targetSize;
     canvas.height = targetSize;
@@ -237,10 +362,21 @@ export class WDTagger {
       const g = data[i * 4 + 1];
       const b = data[i * 4 + 2];
       
-      // WD Tagger models expect NHWC layout, BGR format, values 0-255
-      float32Data[i * 3] = b;
-      float32Data[i * 3 + 1] = g;
-      float32Data[i * 3 + 2] = r;
+      if (isConvNextV2Huge) {
+        // NCHW layout, RGB format, 0-1 range, normalized with mean/std
+        const rNorm = ((r / 255.0) - 0.485) / 0.229;
+        const gNorm = ((g / 255.0) - 0.456) / 0.224;
+        const bNorm = ((b / 255.0) - 0.406) / 0.225;
+        
+        float32Data[i] = rNorm;
+        float32Data[targetSize * targetSize + i] = gNorm;
+        float32Data[targetSize * targetSize * 2 + i] = bNorm;
+      } else {
+        // WD Tagger models expect NHWC layout, BGR format, values 0-255
+        float32Data[i * 3] = b;
+        float32Data[i * 3 + 1] = g;
+        float32Data[i * 3 + 2] = r;
+      }
     }
     
     return float32Data;
@@ -250,7 +386,14 @@ export class WDTagger {
     if (!this.session) throw new Error("Session not initialized");
     
     const inputData = this.preprocessImage(image);
-    const tensor = new ort.Tensor('float32', inputData, [1, 448, 448, 3]);
+    
+    const isConvNextV2Huge = this.currentModelId === 'convnextv2-huge';
+    const targetSize = isConvNextV2Huge ? 512 : 448;
+    const dims = isConvNextV2Huge 
+      ? [1, 3, targetSize, targetSize] 
+      : [1, targetSize, targetSize, 3];
+      
+    const tensor = new ort.Tensor('float32', inputData, dims);
     
     const feeds: Record<string, ort.Tensor> = {};
     feeds[this.session.inputNames[0]] = tensor;
