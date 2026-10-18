@@ -1,5 +1,6 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { ImageUploader } from './components/ImageUploader';
 import { CollageDisplay } from './components/CollageDisplay';
 import { MosaicEditor } from './components/MosaicEditor';
@@ -9,7 +10,7 @@ import { GifMaker } from './components/GifMaker';
 import { generateCollageLayout, generateBackgroundTexture, detectFaceCenters } from './services/geminiService';
 import { saveMixerState, loadMixerState } from './services/mixerStorage';
 import { ImageItem, CollageLayout, AppStatus, LogEntry, AspectRatio, WatermarkSettings, GlobalBlurSettings } from './types';
-import { AlertCircle, Layers, Grid2X2, Loader2, Tag, Maximize, Search, Film, UserCircle } from 'lucide-react';
+import { AlertCircle, Layers, Grid2X2, Loader2, Tag, Maximize, Minimize, Search, Film, UserCircle, PanelLeft } from 'lucide-react';
 import { DanbooruSearch } from './components/DanbooruSearch';
 import { PixivSearch } from './components/PixivSearch';
 import { AdetailerEditor } from './components/AdetailerEditor';
@@ -18,24 +19,20 @@ const MAX_IMAGES = 6;
 
 type AppMode = 'MIX' | 'MOSAIC' | 'TAGS' | 'UPSCALE' | 'DANBOORU_SEARCH' | 'PIXIV_SEARCH' | 'GIF' | 'ADETAILER';
 
-type NavItem = { id: AppMode; label: string; desc: string; Icon: React.ComponentType<{ size?: number }> };
-const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
-  { title: 'Create', items: [
-    { id: 'MIX', label: 'Mix', desc: 'Blend up to 6 images into an AI-designed collage.', Icon: Layers },
-    { id: 'MOSAIC', label: 'Mosaic', desc: 'Compose custom image grids and mosaics.', Icon: Grid2X2 },
-    { id: 'GIF', label: 'GIF', desc: 'Turn frames and clips into animated GIFs.', Icon: Film },
-  ]},
-  { title: 'Edit', items: [
-    { id: 'TAGS', label: 'Tag Editor', desc: 'Auto-tag, edit and inpaint your dataset images.', Icon: Tag },
-    { id: 'UPSCALE', label: 'Upscale', desc: 'Enlarge images with on-device or cloud upscalers.', Icon: Maximize },
-    { id: 'ADETAILER', label: 'ADetailer', desc: 'Detail and fix faces with prompts and masks.', Icon: UserCircle },
-  ]},
-  { title: 'Discover', items: [
-    { id: 'DANBOORU_SEARCH', label: 'Danbooru Search', desc: 'Search posts and tags on Danbooru.', Icon: Search },
-    { id: 'PIXIV_SEARCH', label: 'Pixiv', desc: 'Browse illustrations from Pixiv.', Icon: Search },
-  ]},
-];
-const ALL_NAV = NAV_GROUPS.flatMap(g => g.items);
+// Panes stay mounted (so every editor keeps its state) and only fade in when shown.
+// Defined at module level so React never remounts the children between renders.
+const Pane: React.FC<{ active: boolean; fixed?: boolean; children: React.ReactNode }> = ({ active, fixed, children }) => (
+  <motion.section
+    initial={false}
+    animate={active ? { opacity: 1, y: 0 } : { opacity: 0, y: 14, transition: { duration: 0 } }}
+    transition={{ type: 'spring', stiffness: 260, damping: 28, mass: 0.8 }}
+    style={{ display: active ? 'block' : 'none' }}
+    className={`w-full ${fixed ? 'h-full' : 'min-h-full'}`}
+    aria-hidden={!active}
+  >
+    {children}
+  </motion.section>
+);
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('MIX');
@@ -75,7 +72,7 @@ const App: React.FC = () => {
 
   // Persistence: Load
   useEffect(() => {
-    const minLoadTime = new Promise(resolve => setTimeout(resolve, 2500)); // Smooth 2.5s splash
+    const minLoadTime = new Promise(resolve => setTimeout(resolve, 1200)); // short splash
     const dataLoad = loadMixerState();
 
     Promise.all([dataLoad, minLoadTime]).then(([data]) => {
@@ -96,6 +93,8 @@ const App: React.FC = () => {
     });
   }, []);
 
+  useEffect(() => () => abortControllerRef.current?.abort(), []);
+
   const originalTitleRef = useRef(document.title);
   useEffect(() => {
     if (status === AppStatus.ANALYZING_FACES) {
@@ -114,6 +113,7 @@ const App: React.FC = () => {
 
   // Persistence: Save (Debounced)
   useEffect(() => {
+    if (isAppLoading) return;
     const t = setTimeout(() => {
         saveMixerState(images, {
             layout,
@@ -126,13 +126,13 @@ const App: React.FC = () => {
         });
     }, 1000);
     return () => clearTimeout(t);
-  }, [images, layout, backgroundUrl, showBorders, labelScale, aspectRatio, watermark, globalBlur]);
+  }, [isAppLoading, images, layout, backgroundUrl, showBorders, labelScale, aspectRatio, watermark, globalBlur]);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const now = new Date();
     const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
-    setLogs(prev => [...prev, {
-        id: Math.random().toString(36).substr(2, 9),
+    setLogs(prev => [...prev.slice(-299), {
+        id: Math.random().toString(36).slice(2, 11),
         timestamp: timeString,
         message,
         type
@@ -140,18 +140,23 @@ const App: React.FC = () => {
   };
 
   const handleAddImages = (files: File[]) => {
-    const newImages = files.slice(0, MAX_IMAGES - images.length).map(file => ({
-      id: Math.random().toString(36).substr(2, 9),
+    const room = Math.max(0, MAX_IMAGES - images.length);
+    const newImages = files.slice(0, room).map(file => ({
+      id: Math.random().toString(36).slice(2, 11),
       url: URL.createObjectURL(file),
       file
     }));
-    setImages(prev => [...prev, ...newImages]);
-    if (files.length > 0) {
-        addLog(`Buffered ${files.length} new image(s).`, 'info');
+    if (newImages.length === 0) {
+        if (files.length > 0) addLog(`Buffer full (max ${MAX_IMAGES} images).`, 'warning');
+        return;
     }
+    setImages(prev => [...prev, ...newImages].slice(0, MAX_IMAGES));
+    addLog(`Buffered ${newImages.length} new image(s).`, 'info');
   };
 
   const handleRemoveImage = (id: string) => {
+    const target = images.find(img => img.id === id);
+    if (target) URL.revokeObjectURL(target.url);
     setImages(prev => prev.filter(img => img.id !== id));
     addLog(`Image removed from buffer.`, 'warning');
   };
@@ -271,175 +276,186 @@ const App: React.FC = () => {
       addLog(detailedError, 'error');
       setStatus(AppStatus.ERROR);
     } finally {
-        abortControllerRef.current = null;
+        // Only clear if a newer run hasn't replaced our controller
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
   };
 
   const isBusy = status === AppStatus.ANALYZING_FACES || status === AppStatus.GENERATING_LAYOUT || status === AppStatus.GENERATING_BACKGROUND;
 
-  const current = ALL_NAV.find(n => n.id === mode)!;
-  const isFixed = mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE';
+  // --- SHELL STATE ---
+  const [navOpen, setNavOpen] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  }, []);
+
+  const NAV: { id: AppMode; label: string; icon: React.ElementType; fixed?: boolean }[] = [
+    { id: 'MIX', label: 'Mix', icon: Layers },
+    { id: 'MOSAIC', label: 'Mosaic', icon: Grid2X2, fixed: true },
+    { id: 'TAGS', label: 'Tag Editor', icon: Tag, fixed: true },
+    { id: 'UPSCALE', label: 'Upscale', icon: Maximize, fixed: true },
+    { id: 'GIF', label: 'GIF Maker', icon: Film },
+    { id: 'DANBOORU_SEARCH', label: 'Danbooru', icon: Search },
+    { id: 'PIXIV_SEARCH', label: 'Pixiv', icon: Search },
+    { id: 'ADETAILER', label: 'ADetailer', icon: UserCircle },
+  ];
+  const current = NAV.find(n => n.id === mode)!;
+
+  const ease = [0.16, 1, 0.3, 1] as const;
 
   return (
-    <div className="h-screen w-full flex bg-background text-white selection:bg-accent selection:text-black overflow-hidden">
+    <div className="h-screen w-screen overflow-hidden flex flex-col text-white bg-[#1c1c1c] relative">
+      {/* Mica-style backdrop */}
+      <div className="pointer-events-none absolute inset-0 opacity-70"
+           style={{ background: 'radial-gradient(900px 500px at 8% 0%, rgba(96,205,255,.10), transparent 60%), radial-gradient(700px 500px at 100% 100%, rgba(139,92,246,.09), transparent 60%)' }} />
 
-      {/* --- SPLASH SCREEN --- */}
-      <div
-        className={`fixed inset-0 z-[9999] bg-[#0a0a0f] flex flex-col items-center justify-center transition-all duration-700 ${isAppLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-      >
-          <div className="flex flex-col items-center gap-5">
-              <div className="splash-ring animate-win-spin" />
-              <p className="text-sm text-zinc-400">Loading workspace…</p>
-          </div>
-      </div>
-
-      {/* --- SIDEBAR --- */}
-      <aside className="app-sidebar hidden md:flex md:w-[68px] lg:w-64 shrink-0 flex-col px-3 py-4 overflow-y-auto">
-          <div className="flex items-center gap-3 px-2 pb-2">
-              <img src="https://raw.githubusercontent.com/DEX-1101/SecretNAI/refs/heads/main/avatar.png" alt="" className="w-8 h-8 rounded-lg" />
-              <div className="hidden lg:block leading-tight">
-                  <div className="text-sm font-semibold">x1101</div>
-                  <div className="text-[11px] text-zinc-500">Workspace</div>
+      {/* --- SPLASH --- */}
+      <AnimatePresence>
+        {isAppLoading && (
+          <motion.div
+            key="splash"
+            className="fixed inset-0 z-[9999] bg-[#1c1c1c] flex flex-col items-center justify-center gap-8"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 1.04, filter: 'blur(12px)' }}
+            transition={{ duration: 0.6, ease }}
+          >
+            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.7, ease }}
+              className="w-16 h-16 rounded-2xl grid place-items-center bg-gradient-to-br from-[#60cdff] to-[#0067c0] shadow-[0_0_60px_rgba(96,205,255,.35)]">
+              <Layers size={30} className="text-white" />
+            </motion.div>
+            <div className="flex flex-col items-center gap-3">
+              <div className="text-sm font-semibold tracking-wide text-white/90">x1101 Workspace</div>
+              <div className="relative w-40 h-[3px] rounded-full bg-white/10 overflow-hidden">
+                <motion.div className="absolute inset-y-0 w-1/3 rounded-full bg-[#60cdff]"
+                  animate={{ x: ['-100%', '300%'] }} transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }} />
               </div>
-          </div>
-          <nav className="flex flex-col">
-              {NAV_GROUPS.map(group => (
-                  <div key={group.title}>
-                      <div className="nav-label hidden lg:block">{group.title}</div>
-                      <div className="h-3 lg:hidden" />
-                      <div className="flex flex-col gap-0.5">
-                          {group.items.map(({ id, label, Icon }) => (
-                              <button
-                                  key={id}
-                                  onClick={() => setMode(id)}
-                                  aria-current={mode === id ? 'page' : undefined}
-                                  title={label}
-                                  className="nav-item md:justify-center lg:justify-start"
-                              >
-                                  <Icon size={18} />
-                                  <span className="hidden lg:inline">{label}</span>
-                              </button>
-                          ))}
-                      </div>
-                  </div>
-              ))}
-          </nav>
-      </aside>
-
-      {/* --- MAIN COLUMN --- */}
-      <div className="flex-1 min-w-0 flex flex-col">
-
-        {/* Mobile tab strip */}
-        <div className="md:hidden flex gap-1 overflow-x-auto no-scrollbar p-2 border-b border-white/10 shrink-0">
-            {ALL_NAV.map(({ id, label, Icon }) => (
-                <button key={id} onClick={() => setMode(id)} aria-current={mode === id ? 'page' : undefined} className="nav-item !w-auto whitespace-nowrap">
-                    <Icon size={16} /> {label}
-                </button>
-            ))}
-        </div>
-
-        {/* Page header */}
-        <header className="page-head shrink-0 px-6 lg:px-10 pt-6 pb-4">
-            <h1>{current.label}</h1>
-            <p>{current.desc}</p>
-        </header>
-
-        {/* Scrollable page body */}
-        <main className={`flex-1 min-h-0 px-6 lg:px-10 pb-6 ${isFixed ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-      <div className={`w-full flex flex-col gap-6 ${isFixed ? 'h-full' : 'min-h-full'} max-w-[1600px] mx-auto`}>
-        
-        {/* MIX MODE */}
-        <div className={`w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'MIX' ? 'block' : 'hidden'}`}>
-            <CollageDisplay 
-                layout={layout} 
-                images={images} 
-                backgroundUrl={backgroundUrl}
-                showBorders={showBorders}
-                labelScale={labelScale}
-                aspectRatio={aspectRatio}
-                onLayoutUpdate={setLayout}
-                watermark={watermark}
-                onWatermarkUpdate={setWatermark}
-                globalBlur={globalBlur}
-            />
-
-            {/* Error Message */}
-            {error && (
-                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex gap-3 items-start shadow-lg backdrop-blur-md">
-                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                        <h3 className="text-red-400 text-sm font-semibold mb-1">Generation Interrupted</h3>
-                        <p className="text-red-200/90 text-sm leading-relaxed break-words">
-                            {error}
-                        </p>
-                    </div>
-                </div>
-            )}
-
-            {/* Unified Inputs & Actions Panel */}
-            <div className="w-full bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl p-6">
-                <ImageUploader 
-                    images={images} 
-                    onAddImages={handleAddImages} 
-                    onRemoveImage={handleRemoveImage}
-                    onClear={handleClearMix}
-                    maxImages={MAX_IMAGES}
-                    logs={logs}
-                    status={status}
-                    onGenerate={handleMix}
-                    onCancel={handleCancel}
-                    // Visual Props
-                    aspectRatio={aspectRatio}
-                    onAspectRatioChange={setAspectRatio}
-                    showBorders={showBorders}
-                    onToggleBorders={() => setShowBorders(prev => !prev)}
-                    labelScale={labelScale}
-                    onAdjustLabelScale={adjustLabelScale}
-                    isBusy={isBusy}
-                    watermark={watermark}
-                    onWatermarkChange={setWatermark}
-                    globalBlur={globalBlur}
-                    onGlobalBlurChange={setGlobalBlur}
-                />
             </div>
-        </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-        {/* MOSAIC MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'MOSAIC' ? 'block' : 'hidden'}`}>
-            <MosaicEditor />
+      {/* --- TITLE BAR --- */}
+      <header className="relative z-20 h-11 shrink-0 flex items-center gap-3 px-3 border-b border-white/[0.06] bg-[#202020]/70 backdrop-blur-xl">
+        <button onClick={() => setNavOpen(o => !o)} title="Toggle navigation"
+          className="w-8 h-8 grid place-items-center rounded-md text-white/70 hover:bg-white/10 hover:text-white">
+          <PanelLeft size={16} />
+        </button>
+        <div className="flex items-center gap-2 text-[13px] text-white/80">
+          <span className="w-4 h-4 rounded bg-gradient-to-br from-[#60cdff] to-[#0067c0] grid place-items-center"><Layers size={10} /></span>
+          <span className="font-medium">x1101</span>
+          <span className="text-white/30">/</span>
+          <AnimatePresence mode="wait">
+            <motion.span key={mode} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 6 }} transition={{ duration: 0.18 }} className="text-white/60">
+              {current.label}
+            </motion.span>
+          </AnimatePresence>
         </div>
+        <div className="flex-1" />
+        <AnimatePresence>
+          {isBusy && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+              onClick={() => setMode('MIX')}
+              className="flex items-center gap-2 h-7 px-3 rounded-full bg-[#60cdff]/10 border border-[#60cdff]/30 text-[12px] text-[#60cdff]">
+              <Loader2 size={12} className="animate-spin" />
+              {status === AppStatus.ANALYZING_FACES ? 'Analyzing faces' : status === AppStatus.GENERATING_LAYOUT ? 'Generating layout' : 'Generating background'}
+            </motion.button>
+          )}
+        </AnimatePresence>
+        <button onClick={toggleFullscreen} title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+          className="w-8 h-8 grid place-items-center rounded-md text-white/70 hover:bg-white/10 hover:text-white">
+          {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+        </button>
+      </header>
 
-        {/* TAGS MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'TAGS' ? 'block' : 'hidden'}`}>
-            <TagEditor />
-        </div>
+      <div className="relative z-10 flex-1 min-h-0 flex">
+        {/* --- NAVIGATION PANE --- */}
+        <motion.nav
+          initial={false}
+          animate={{ width: navOpen ? 208 : 52 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+          className="shrink-0 h-full flex flex-col gap-1 p-1.5 overflow-hidden"
+        >
+          {NAV.map(item => {
+            const Icon = item.icon;
+            const active = mode === item.id;
+            return (
+              <button key={item.id} onClick={() => setMode(item.id)} title={item.label}
+                className={`relative h-10 shrink-0 flex items-center gap-3 px-3 rounded-md text-[13px] whitespace-nowrap ${active ? 'text-white' : 'text-white/65 hover:text-white hover:bg-white/[0.06]'}`}>
+                {active && (
+                  <motion.span layoutId="nav-active" className="absolute inset-0 rounded-md bg-white/[0.09]"
+                    transition={{ type: 'spring', stiffness: 400, damping: 34 }}>
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[3px] rounded-full bg-[#60cdff]" />
+                  </motion.span>
+                )}
+                <span className="relative shrink-0">
+                  {item.id === 'MIX' && isBusy ? <Loader2 size={17} className="animate-spin text-[#60cdff]" /> : <Icon size={17} />}
+                </span>
+                <motion.span className="relative" animate={{ opacity: navOpen ? 1 : 0 }} transition={{ duration: 0.15 }}>{item.label}</motion.span>
+              </button>
+            );
+          })}
+        </motion.nav>
 
-        {/* UPSCALE MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'UPSCALE' ? 'block' : 'hidden'}`}>
-            <UpscaleEditor />
-        </div>
+        {/* --- CONTENT --- */}
+        <main className="flex-1 min-w-0 h-full pr-2 pb-2">
+          <div className={`h-full rounded-xl border border-white/[0.07] bg-[#272727]/55 backdrop-blur-sm shadow-[0_8px_32px_rgba(0,0,0,.3)] ${current.fixed ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+            <div className={`${current.fixed ? 'h-full' : 'min-h-full'} p-4 md:p-6`}>
 
-        {/* GIF MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'GIF' ? 'block' : 'hidden'}`}>
-            <GifMaker />
-        </div>
+              <Pane active={mode === 'MIX'}>
+                <div className="w-full max-w-6xl mx-auto space-y-6">
+                  <CollageDisplay
+                    layout={layout} images={images} backgroundUrl={backgroundUrl}
+                    showBorders={showBorders} labelScale={labelScale} aspectRatio={aspectRatio}
+                    onLayoutUpdate={setLayout} watermark={watermark} onWatermarkUpdate={setWatermark} globalBlur={globalBlur}
+                  />
 
-        {/* DANBOORU SEARCH MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'DANBOORU_SEARCH' ? 'block' : 'hidden'}`}>
-            <DanbooruSearch />
-        </div>
+                  <AnimatePresence>
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8, height: 0 }} animate={{ opacity: 1, y: 0, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                        className="p-4 bg-red-500/10 border border-red-500/25 rounded-xl flex gap-3 items-start overflow-hidden"
+                      >
+                        <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-red-400 text-xs font-semibold uppercase mb-1 tracking-wider">Generation Interrupted</h3>
+                          <p className="text-red-200/90 text-sm leading-relaxed break-words selectable">{error}</p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
-        {/* PIXIV SEARCH MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'PIXIV_SEARCH' ? 'block' : 'hidden'}`}>
-            <PixivSearch />
-        </div>
+                  <div className="w-full bg-white/5 border border-white/10 rounded-xl p-5 md:p-6">
+                    <ImageUploader
+                      images={images} onAddImages={handleAddImages} onRemoveImage={handleRemoveImage} onClear={handleClearMix}
+                      maxImages={MAX_IMAGES} logs={logs} status={status} onGenerate={handleMix} onCancel={handleCancel}
+                      aspectRatio={aspectRatio} onAspectRatioChange={setAspectRatio}
+                      showBorders={showBorders} onToggleBorders={() => setShowBorders(prev => !prev)}
+                      labelScale={labelScale} onAdjustLabelScale={adjustLabelScale} isBusy={isBusy}
+                      watermark={watermark} onWatermarkChange={setWatermark}
+                      globalBlur={globalBlur} onGlobalBlurChange={setGlobalBlur}
+                    />
+                  </div>
+                </div>
+              </Pane>
 
-        {/* ADETAILER MODE */}
-        <div className={`w-full h-full animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'ADETAILER' ? 'block' : 'hidden'}`}>
-            <AdetailerEditor />
-        </div>
+              <Pane active={mode === 'MOSAIC'} fixed><MosaicEditor /></Pane>
+              <Pane active={mode === 'TAGS'} fixed><TagEditor /></Pane>
+              <Pane active={mode === 'UPSCALE'} fixed><UpscaleEditor /></Pane>
+              <Pane active={mode === 'GIF'}><GifMaker /></Pane>
+              <Pane active={mode === 'DANBOORU_SEARCH'}><DanbooruSearch /></Pane>
+              <Pane active={mode === 'PIXIV_SEARCH'}><PixivSearch /></Pane>
+              <Pane active={mode === 'ADETAILER'}><AdetailerEditor /></Pane>
 
-      </div>
+            </div>
+          </div>
         </main>
       </div>
     </div>
