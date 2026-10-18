@@ -18,6 +18,17 @@ const MAX_IMAGES = 6;
 
 type AppMode = 'MIX' | 'MOSAIC' | 'TAGS' | 'UPSCALE' | 'DANBOORU_SEARCH' | 'PIXIV_SEARCH' | 'GIF' | 'ADETAILER';
 
+const NAV_ITEMS: { id: AppMode; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
+  { id: 'MIX', label: 'Mix', Icon: Layers },
+  { id: 'MOSAIC', label: 'Mosaic', Icon: Grid2X2 },
+  { id: 'TAGS', label: 'Tag Editor', Icon: Tag },
+  { id: 'UPSCALE', label: 'Upscale', Icon: Maximize },
+  { id: 'GIF', label: 'GIF', Icon: Film },
+  { id: 'DANBOORU_SEARCH', label: 'Danbooru Search', Icon: Search },
+  { id: 'PIXIV_SEARCH', label: 'Pixiv', Icon: Search },
+  { id: 'ADETAILER', label: 'ADetailer', Icon: UserCircle },
+];
+
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('MIX');
   
@@ -259,86 +270,42 @@ const App: React.FC = () => {
   const isBusy = status === AppStatus.ANALYZING_FACES || status === AppStatus.GENERATING_LAYOUT || status === AppStatus.GENERATING_BACKGROUND;
 
   return (
-    <div className={`min-h-screen bg-background text-gray-200 flex flex-col items-center p-4 selection:bg-accent selection:text-white ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'h-screen overflow-hidden' : ''}`}>
+    <div className={`min-h-screen bg-background text-white flex flex-col items-center p-4 selection:bg-accent selection:text-black ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'h-screen overflow-hidden' : ''}`}>
       
-      {/* --- SPLASH SCREEN --- */}
-      <div 
+      {/* --- SPLASH SCREEN (Windows 11 style) --- */}
+      <div
         className={`
-            fixed inset-0 z-[9999] 
-            /* Deep Purple/Black Animated Gradient */
-            bg-gradient-to-br from-black via-[#4c1d95] to-black
-            bg-[length:400%_400%] animate-gradient
-            flex flex-col items-center justify-center transition-all duration-1000 ease-[cubic-bezier(0.4,0,0.2,1)]
-            ${isAppLoading ? 'opacity-100' : 'opacity-0 pointer-events-none scale-105 filter blur-xl'}
+            fixed inset-0 z-[9999] bg-[#202020]
+            flex flex-col items-center justify-center transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]
+            ${isAppLoading ? 'opacity-100' : 'opacity-0 pointer-events-none scale-[1.02]'}
         `}
       >
-          <div className="flex flex-col items-center gap-8">
-              <div className="flex flex-col items-center gap-6">
-                  {/* Clean White Text - Segoe UI (font-sans) */}
-                  <h1 className="text-xl font-sans font-bold text-white tracking-[0.2em] uppercase animate-pulse">
-                      Loading Interface...
-                  </h1>
-
-                  {/* Minimal White Loading Line (No heavy background container) - Slowed Animation */}
-                  <div className="relative w-48 h-[2px] bg-white/10 rounded-full overflow-hidden">
-                      {/* Traveling Beam - 3s duration */}
-                      <div className="absolute top-0 bottom-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white to-transparent -translate-x-full animate-[shimmer_3s_infinite_linear]"></div>
-                  </div>
-              </div>
+          <div className="flex flex-col items-center gap-6">
+              <div className="win-ring animate-win-spin" />
+              <h1 className="text-sm font-normal text-white/80 tracking-wide">Loading workspace…</h1>
           </div>
       </div>
 
-      {/* Header / Nav */}
-      <div className={`w-full flex items-center justify-center shrink-0 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'max-w-[95%] mb-4' : 'max-w-6xl mb-8'}`}>
-         <div className="flex bg-white/5 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 shadow-2xl">
-            <button
-                onClick={() => setMode('MIX')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'MIX' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Layers size={16} /> MIX
-            </button>
-            <button
-                onClick={() => setMode('MOSAIC')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'MOSAIC' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Grid2X2 size={16} /> MOSAIC
-            </button>
-            <button
-                onClick={() => setMode('TAGS')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'TAGS' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Tag size={16} /> TAG EDITOR
-            </button>
-            <button
-                onClick={() => setMode('UPSCALE')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'UPSCALE' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Maximize size={16} /> UPSCALE
-            </button>
-            <button
-                onClick={() => setMode('GIF')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'GIF' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Film size={16} /> GIF
-            </button>
-            <button
-                onClick={() => setMode('DANBOORU_SEARCH')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'DANBOORU_SEARCH' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Search size={16} /> DANBOORU SEARCH
-            </button>
-            <button
-                onClick={() => setMode('PIXIV_SEARCH')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'PIXIV_SEARCH' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <Search size={16} /> PIXIV
-            </button>
-            <button
-                onClick={() => setMode('ADETAILER')}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all duration-300 ${mode === 'ADETAILER' ? 'bg-white/10 text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-            >
-                <UserCircle size={16} /> ADETAILER
-            </button>
+      {/* Header / Nav (Windows 11 title bar + tab strip) */}
+      <div className={`w-full flex items-center justify-center shrink-0 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'max-w-[95%] mb-4' : 'max-w-6xl mb-6'}`}>
+         <div className="win-titlebar w-full flex items-center gap-3 p-1.5 pl-3">
+            <div className="hidden sm:flex items-center gap-2 pr-3 mr-1 border-r border-white/10 shrink-0">
+                <img src="https://raw.githubusercontent.com/DEX-1101/SecretNAI/refs/heads/main/avatar.png" alt="" className="w-5 h-5 rounded" />
+                <span className="text-xs text-white/80">x1101</span>
+            </div>
+            <div role="tablist" className="flex items-center gap-0.5 overflow-x-auto no-scrollbar">
+                {NAV_ITEMS.map(({ id, label, Icon }) => (
+                    <button
+                        key={id}
+                        role="tab"
+                        aria-selected={mode === id}
+                        onClick={() => setMode(id)}
+                        className="win-tab"
+                    >
+                        <Icon size={16} /> {label}
+                    </button>
+                ))}
+            </div>
          </div>
       </div>
 
@@ -361,10 +328,10 @@ const App: React.FC = () => {
 
             {/* Error Message */}
             {error && (
-                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex gap-3 items-start shadow-lg backdrop-blur-md">
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex gap-3 items-start shadow-lg backdrop-blur-md">
                     <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                        <h3 className="text-red-400 text-xs font-bold uppercase mb-1 tracking-wider">Generation Interrupted</h3>
+                        <h3 className="text-red-400 text-sm font-semibold mb-1">Generation Interrupted</h3>
                         <p className="text-red-200/90 text-sm leading-relaxed break-words">
                             {error}
                         </p>
@@ -373,7 +340,7 @@ const App: React.FC = () => {
             )}
 
             {/* Unified Inputs & Actions Panel */}
-            <div className="w-full bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-3xl p-6">
+            <div className="w-full bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl p-6">
                 <ImageUploader 
                     images={images} 
                     onAddImages={handleAddImages} 
