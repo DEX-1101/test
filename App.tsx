@@ -18,16 +18,24 @@ const MAX_IMAGES = 6;
 
 type AppMode = 'MIX' | 'MOSAIC' | 'TAGS' | 'UPSCALE' | 'DANBOORU_SEARCH' | 'PIXIV_SEARCH' | 'GIF' | 'ADETAILER';
 
-const NAV_ITEMS: { id: AppMode; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
-  { id: 'MIX', label: 'Mix', Icon: Layers },
-  { id: 'MOSAIC', label: 'Mosaic', Icon: Grid2X2 },
-  { id: 'TAGS', label: 'Tag Editor', Icon: Tag },
-  { id: 'UPSCALE', label: 'Upscale', Icon: Maximize },
-  { id: 'GIF', label: 'GIF', Icon: Film },
-  { id: 'DANBOORU_SEARCH', label: 'Danbooru Search', Icon: Search },
-  { id: 'PIXIV_SEARCH', label: 'Pixiv', Icon: Search },
-  { id: 'ADETAILER', label: 'ADetailer', Icon: UserCircle },
+type NavItem = { id: AppMode; label: string; desc: string; Icon: React.ComponentType<{ size?: number }> };
+const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  { title: 'Create', items: [
+    { id: 'MIX', label: 'Mix', desc: 'Blend up to 6 images into an AI-designed collage.', Icon: Layers },
+    { id: 'MOSAIC', label: 'Mosaic', desc: 'Compose custom image grids and mosaics.', Icon: Grid2X2 },
+    { id: 'GIF', label: 'GIF', desc: 'Turn frames and clips into animated GIFs.', Icon: Film },
+  ]},
+  { title: 'Edit', items: [
+    { id: 'TAGS', label: 'Tag Editor', desc: 'Auto-tag, edit and inpaint your dataset images.', Icon: Tag },
+    { id: 'UPSCALE', label: 'Upscale', desc: 'Enlarge images with on-device or cloud upscalers.', Icon: Maximize },
+    { id: 'ADETAILER', label: 'ADetailer', desc: 'Detail and fix faces with prompts and masks.', Icon: UserCircle },
+  ]},
+  { title: 'Discover', items: [
+    { id: 'DANBOORU_SEARCH', label: 'Danbooru Search', desc: 'Search posts and tags on Danbooru.', Icon: Search },
+    { id: 'PIXIV_SEARCH', label: 'Pixiv', desc: 'Browse illustrations from Pixiv.', Icon: Search },
+  ]},
 ];
+const ALL_NAV = NAV_GROUPS.flatMap(g => g.items);
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('MIX');
@@ -269,47 +277,76 @@ const App: React.FC = () => {
 
   const isBusy = status === AppStatus.ANALYZING_FACES || status === AppStatus.GENERATING_LAYOUT || status === AppStatus.GENERATING_BACKGROUND;
 
+  const current = ALL_NAV.find(n => n.id === mode)!;
+  const isFixed = mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE';
+
   return (
-    <div className={`min-h-screen bg-background text-white flex flex-col items-center p-4 selection:bg-accent selection:text-black ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'h-screen overflow-hidden' : ''}`}>
-      
-      {/* --- SPLASH SCREEN (Windows 11 style) --- */}
+    <div className="h-screen w-full flex bg-background text-white selection:bg-accent selection:text-black overflow-hidden">
+
+      {/* --- SPLASH SCREEN --- */}
       <div
-        className={`
-            fixed inset-0 z-[9999] bg-[#202020]
-            flex flex-col items-center justify-center transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]
-            ${isAppLoading ? 'opacity-100' : 'opacity-0 pointer-events-none scale-[1.02]'}
-        `}
+        className={`fixed inset-0 z-[9999] bg-[#0a0a0f] flex flex-col items-center justify-center transition-all duration-700 ${isAppLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
       >
-          <div className="flex flex-col items-center gap-6">
-              <div className="win-ring animate-win-spin" />
-              <h1 className="text-sm font-normal text-white/80 tracking-wide">Loading workspace…</h1>
+          <div className="flex flex-col items-center gap-5">
+              <div className="splash-ring animate-win-spin" />
+              <p className="text-sm text-zinc-400">Loading workspace…</p>
           </div>
       </div>
 
-      {/* Header / Nav (Windows 11 title bar + tab strip) */}
-      <div className={`w-full flex items-center justify-center shrink-0 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' ? 'max-w-[95%] mb-4' : 'max-w-6xl mb-6'}`}>
-         <div className="win-titlebar w-full flex items-center gap-3 p-1.5 pl-3">
-            <div className="hidden sm:flex items-center gap-2 pr-3 mr-1 border-r border-white/10 shrink-0">
-                <img src="https://raw.githubusercontent.com/DEX-1101/SecretNAI/refs/heads/main/avatar.png" alt="" className="w-5 h-5 rounded" />
-                <span className="text-xs text-white/80">x1101</span>
-            </div>
-            <div role="tablist" className="flex items-center gap-0.5 overflow-x-auto no-scrollbar">
-                {NAV_ITEMS.map(({ id, label, Icon }) => (
-                    <button
-                        key={id}
-                        role="tab"
-                        aria-selected={mode === id}
-                        onClick={() => setMode(id)}
-                        className="win-tab"
-                    >
-                        <Icon size={16} /> {label}
-                    </button>
-                ))}
-            </div>
-         </div>
-      </div>
+      {/* --- SIDEBAR --- */}
+      <aside className="app-sidebar hidden md:flex md:w-[68px] lg:w-64 shrink-0 flex-col px-3 py-4 overflow-y-auto">
+          <div className="flex items-center gap-3 px-2 pb-2">
+              <img src="https://raw.githubusercontent.com/DEX-1101/SecretNAI/refs/heads/main/avatar.png" alt="" className="w-8 h-8 rounded-lg" />
+              <div className="hidden lg:block leading-tight">
+                  <div className="text-sm font-semibold">x1101</div>
+                  <div className="text-[11px] text-zinc-500">Workspace</div>
+              </div>
+          </div>
+          <nav className="flex flex-col">
+              {NAV_GROUPS.map(group => (
+                  <div key={group.title}>
+                      <div className="nav-label hidden lg:block">{group.title}</div>
+                      <div className="h-3 lg:hidden" />
+                      <div className="flex flex-col gap-0.5">
+                          {group.items.map(({ id, label, Icon }) => (
+                              <button
+                                  key={id}
+                                  onClick={() => setMode(id)}
+                                  aria-current={mode === id ? 'page' : undefined}
+                                  title={label}
+                                  className="nav-item md:justify-center lg:justify-start"
+                              >
+                                  <Icon size={18} />
+                                  <span className="hidden lg:inline">{label}</span>
+                              </button>
+                          ))}
+                      </div>
+                  </div>
+              ))}
+          </nav>
+      </aside>
 
-      <div className={`w-full flex flex-col gap-6 transition-all duration-500 ${mode === 'MOSAIC' || mode === 'TAGS' || mode === 'UPSCALE' || mode === 'DANBOORU_SEARCH' || mode === 'PIXIV_SEARCH' || mode === 'ADETAILER' ? 'flex-1 h-full max-w-[95%] pb-10' : 'max-w-6xl'}`}>
+      {/* --- MAIN COLUMN --- */}
+      <div className="flex-1 min-w-0 flex flex-col">
+
+        {/* Mobile tab strip */}
+        <div className="md:hidden flex gap-1 overflow-x-auto no-scrollbar p-2 border-b border-white/10 shrink-0">
+            {ALL_NAV.map(({ id, label, Icon }) => (
+                <button key={id} onClick={() => setMode(id)} aria-current={mode === id ? 'page' : undefined} className="nav-item !w-auto whitespace-nowrap">
+                    <Icon size={16} /> {label}
+                </button>
+            ))}
+        </div>
+
+        {/* Page header */}
+        <header className="page-head shrink-0 px-6 lg:px-10 pt-6 pb-4">
+            <h1>{current.label}</h1>
+            <p>{current.desc}</p>
+        </header>
+
+        {/* Scrollable page body */}
+        <main className={`flex-1 min-h-0 px-6 lg:px-10 pb-6 ${isFixed ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`w-full flex flex-col gap-6 ${isFixed ? 'h-full' : 'min-h-full'} max-w-[1600px] mx-auto`}>
         
         {/* MIX MODE */}
         <div className={`w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ${mode === 'MIX' ? 'block' : 'hidden'}`}>
@@ -402,6 +439,8 @@ const App: React.FC = () => {
             <AdetailerEditor />
         </div>
 
+      </div>
+        </main>
       </div>
     </div>
   );
